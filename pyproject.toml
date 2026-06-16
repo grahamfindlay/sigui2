@@ -1,0 +1,34 @@
+[project]
+name = "sigui2"
+version = "0.0.1.dev0"
+description = "Performant, browser-first GUI for SpikeInterface SortingAnalyzer (deck.gl/WebGL2 + binary websocket)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Graham Findlay" }]
+
+# Sibling workspace dep is a DIRECT GIT URL per the workspace dual-use rule
+# (AGENTS.md "Package Dual-Use Install Pattern"). gfys_workspace/pyproject.toml
+# overrides this to the local editable checkout for workspace dev.
+dependencies = [
+    "spikeinterface-gui @ git+https://github.com/SpikeInterface/spikeinterface-gui.git@main",
+    "numpy",
+    "fastapi",
+    "uvicorn",
+    "websockets",
+    "msgpack",
+    "pyarrow",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+sigui2 = "sigui2.cli:main"
+
+[build-system]
+requires = ["setuptools>=62.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["sigui2*"]

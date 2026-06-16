@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual env (sigui2 uses the workspace venv for dev; a local one may exist)
+.venv/
+
+# Node / frontend build
+frontend/node_modules/
+frontend/dist/
+
+# Dev/verification artifacts (kept on disk, not tracked)
+screenshots/
+
+# OS
+.DS_Store
