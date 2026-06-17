@@ -14,6 +14,11 @@ export interface Meta {
   metric_columns: string[];
   unit_metrics: Record<string, Record<string, number | null>>;
   curation: CurationState;
+  // Probe geometry + template shape (waveform view).
+  channel_locations: [number, number][];
+  nbefore: number;
+  n_template_samples: number;
+  template_abs_max: number;
 }
 
 export interface LabelDefinition {

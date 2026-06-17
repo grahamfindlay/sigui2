@@ -124,6 +124,9 @@ def build_metadata(session: Session) -> dict:
 
     units = build_units_table(session)
 
+    loc = ctrl.get_contact_location()  # (n_channels, 2)
+    wf_min, wf_max = ctrl.get_waveforms_range()
+
     return {
         "type": "metadata",
         "num_units": len(unit_ids),
@@ -138,6 +141,11 @@ def build_metadata(session: Session) -> dict:
         "metric_columns": units["columns"],
         "unit_metrics": units["rows"],
         "curation": build_curation_state(session),
+        # Probe geometry + template shape for the waveform view.
+        "channel_locations": [[float(x), float(y)] for x, y in loc],
+        "nbefore": int(ctrl.nbefore),
+        "n_template_samples": int(ctrl.templates_average.shape[1]),
+        "template_abs_max": float(max(abs(wf_min), abs(wf_max))),
     }
 
 
@@ -232,6 +240,42 @@ def build_scatter_frame(
 
 def _unit_index_map(ctrl) -> dict[str, int]:
     return {str(u): i for i, u in enumerate(ctrl.unit_ids)}
+
+
+def build_waveform_frame(session: Session, unit_ids: list) -> bytes:
+    """Per-unit average templates on each unit's sparse channels.
+
+    Per-unit and self-contained (delta-protocol cacheable like the scatter view):
+    a unit's template bytes don't depend on which other units are requested. The
+    flat ``values`` buffer holds each unit's (n_channels, n_samples) template
+    row-major; the header carries each unit's channel indices + float offset, and
+    the client positions every channel's waveform at its probe location.
+    """
+    ctrl = session.controller
+    templates = ctrl.templates_average  # (n_units, n_samples, n_channels)
+    mask = ctrl.get_sparsity_mask()
+    idx_map = _unit_index_map(ctrl)
+    n_samples = int(templates.shape[1])
+
+    vals, units_hdr, offset = [], [], 0
+    for u in unit_ids:
+        ui = idx_map.get(str(u))
+        if ui is None:
+            continue
+        chans = np.nonzero(mask[ui])[0]
+        t = np.ascontiguousarray(templates[ui][:, chans].T, dtype="float32")  # (n_chan, n_samples)
+        vals.append(t.ravel())
+        units_hdr.append({
+            "id": _uid(ctrl.unit_ids[ui]),
+            "channels": [int(c) for c in chans],
+            "n_channels": int(chans.size),
+            "offset": int(offset),
+        })
+        offset += t.size
+
+    values = np.concatenate(vals) if vals else np.zeros(0, dtype="float32")
+    header = {"type": "waveform_frame", "n_samples": n_samples, "units": units_hdr}
+    return FrameBuilder().add("values", values).build(header)
 
 
 def build_heatmap_frame(session: Session, view: str = "similarity") -> bytes:

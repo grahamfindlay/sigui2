@@ -5,6 +5,7 @@ import { Deck, OrthographicView } from "@deck.gl/core";
 import { LineLayer } from "@deck.gl/layers";
 import { Sock } from "./socket";
 import { DecodedFrame } from "./frame";
+import { attachGainKeys, clampGain } from "./gainControl";
 
 export class TraceView {
   private deck: Deck;
@@ -14,12 +15,20 @@ export class TraceView {
   private lastReq = 0;
   private fitted = false;
   private onFps?: (n: number) => void;
+  private onGain?: (g: number) => void;
   private canvas: HTMLCanvasElement;
+  private ampGain = 1;
+  private lastFrame: DecodedFrame | null = null;
 
-  constructor(canvas: HTMLCanvasElement, sock: Sock, onFps?: (n: number) => void) {
+  constructor(
+    canvas: HTMLCanvasElement, sock: Sock,
+    onFps?: (n: number) => void, onGain?: (g: number) => void,
+  ) {
     this.sock = sock;
     this.canvas = canvas;
     this.onFps = onFps;
+    this.onGain = onGain;
+    attachGainKeys(canvas, (f) => this.bumpGain(f));
     this.deck = new Deck({
       canvas,
       views: [new OrthographicView({ id: "t" })],
@@ -48,6 +57,12 @@ export class TraceView {
     await this.request(0, Math.min(2, durationS));
   }
 
+  bumpGain(factor: number) {
+    this.ampGain = clampGain(this.ampGain * factor);
+    if (this.lastFrame) this.draw(this.lastFrame);
+    this.onGain?.(this.ampGain);
+  }
+
   private onView(viewState: any) {
     const zx = Array.isArray(viewState.zoom) ? viewState.zoom[0] : viewState.zoom;
     const visW = this.w() / Math.pow(2, zx);
@@ -72,6 +87,7 @@ export class TraceView {
   }
 
   private draw(frame: DecodedFrame) {
+    this.lastFrame = frame;
     const { header, buffers } = frame;
     const n = header.n_points as number;
     const chans = header.channel_inds as number[];
@@ -88,7 +104,9 @@ export class TraceView {
     for (let k = 0; k < ymin.length; k++) maxAbs = Math.max(maxAbs, Math.abs(ymin[k]));
     if (!raw)
       for (let k = 0; k < ymax.length; k++) maxAbs = Math.max(maxAbs, Math.abs(ymax[k]));
-    const gain = 0.42 / maxAbs;
+    // Per-frame autoscale (loudest channel ~0.5 of the inter-channel gap) times
+    // the user amplitude gain (+/- keys / corner control).
+    const gain = (0.5 / maxAbs) * this.ampGain;
 
     let src: Float32Array, tgt: Float32Array, N: number;
     if (raw) {

@@ -10,6 +10,7 @@ import { TracePane } from "./components/TracePane";
 import { ScatterPane } from "./components/ScatterPane";
 import { HeatmapPane } from "./components/HeatmapPane";
 import { HistogramPane } from "./components/HistogramPane";
+import { WaveformPane } from "./components/WaveformPane";
 import { UnitListView } from "./components/UnitListView";
 
 // Stress is a fixed GPU benchmark switch (?stress=N); read once at module load.
@@ -29,6 +30,10 @@ function ScatterPanel() {
 function HeatmapPanel() {
   const { sock } = useSigui();
   return <HeatmapPane sock={sock} />;
+}
+function WaveformPanel() {
+  const { sock, meta, visibleUnits } = useSigui();
+  return <WaveformPane sock={sock} meta={meta} visibleUnits={visibleUnits} />;
 }
 function IsiPanel() {
   const { sock, meta, visibleUnits } = useSigui();
@@ -51,6 +56,7 @@ export const panelComponents = {
   trace: TracePanel,
   scatter: ScatterPanel,
   heatmap: HeatmapPanel,
+  waveform: WaveformPanel,
   isi: IsiPanel,
   acg: AcgPanel,
 };
@@ -74,6 +80,10 @@ export function buildDefaultLayout(api: DockviewApi): void {
   api.addPanel({
     id: "heatmap", component: "heatmap", title: "similarity",
     position: { referencePanel: "scatter", direction: "right" },
+  });
+  api.addPanel({
+    id: "waveform", component: "waveform", title: "waveforms",
+    position: { referencePanel: "heatmap", direction: "right" },
   });
   api.addPanel({
     id: "isi", component: "isi", title: "ISI",

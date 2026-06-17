@@ -163,6 +163,26 @@ def test_scatter_per_unit_determinism(client):
     assert np.array_equal(bboth["color"][lo0:hi0], b0["color"])
 
 
+def test_waveform_frame(client):
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "hello"})
+        meta = ws.receive_json()
+        assert len(meta["channel_locations"]) == meta["num_channels"]
+        assert meta["n_template_samples"] > 0 and meta["template_abs_max"] > 0
+        units = meta["unit_ids"][:3]
+        ws.send_json({"type": "waveform_request", "unit_ids": units})
+        header, bufs = decode_frame(ws.receive_bytes())
+    assert header["type"] == "waveform_frame"
+    ns = header["n_samples"]
+    assert len(header["units"]) == len(units)
+    # flat values buffer = sum of each unit's (n_channels * n_samples)
+    assert bufs["values"].size == sum(u["n_channels"] * ns for u in header["units"])
+    u0 = header["units"][0]
+    assert len(u0["channels"]) == u0["n_channels"]
+    seg = bufs["values"][u0["offset"]: u0["offset"] + u0["n_channels"] * ns]
+    assert seg.size == u0["n_channels"] * ns
+
+
 def test_heatmap_frame(client):
     with client.websocket_connect("/ws") as ws:
         ws.send_json({"type": "heatmap_request", "view": "similarity"})

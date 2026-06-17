@@ -32,6 +32,7 @@ from .schema import (
     SetVisibleUnits,
     TraceViewport,
     UnmergeUnits,
+    WaveformRequest,
 )
 from .session import Session
 
@@ -89,6 +90,13 @@ async def _dispatch(ws: WebSocket, session: Session, msg) -> None:
             else protocol.build_isi_frame
         )
         frame = await anyio.to_thread.run_sync(builder, session, unit_ids)
+        await ws.send_bytes(frame)
+
+    elif isinstance(msg, WaveformRequest):
+        unit_ids = msg.unit_ids or list(ctrl.get_visible_unit_ids())
+        frame = await anyio.to_thread.run_sync(
+            protocol.build_waveform_frame, session, unit_ids,
+        )
         await ws.send_bytes(frame)
 
     elif isinstance(msg, (MergeUnits, UnmergeUnits, DeleteUnits, RestoreUnits,

@@ -56,6 +56,11 @@ class IsiRequest(BaseModel):
     unit_ids: list[Any] | None = None
 
 
+class WaveformRequest(BaseModel):
+    type: Literal["waveform_request"]
+    unit_ids: list[Any] | None = None
+
+
 # --- curation control plane (mutations -> server echoes a "curation" state) ---
 
 
@@ -93,7 +98,7 @@ class SaveCuration(BaseModel):
 ControlMessage = Annotated[
     Union[
         Hello, SetVisibleUnits, TraceViewport, ScatterRequest, SelectSpikes,
-        HeatmapRequest, CorrelogramRequest, IsiRequest,
+        HeatmapRequest, CorrelogramRequest, IsiRequest, WaveformRequest,
         MergeUnits, UnmergeUnits, DeleteUnits, RestoreUnits, LabelUnits, SaveCuration,
     ],
     Field(discriminator="type"),

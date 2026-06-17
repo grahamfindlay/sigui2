@@ -158,3 +158,35 @@ sorted row model and `@tanstack/react-virtual` for row virtualization (scales to
   `Controller.get_units_table()` (spikeinterface `make_units_table_from_analyzer`),
   always augmented with `num_spikes`/`firing_rate` so the table is useful even on
   analyzers without a quality-metrics extension (the synthetic one only has x/y).
+
+## Waveform view: geometry-positioned templates + amplitude gain
+
+`waveformView.ts` draws each unit's average template at probe geometry — every
+channel's template is a short polyline anchored at the channel `(x, y)`, all
+units overlaid (deck.gl `LineLayer`, binary attributes, same hot path as traces).
+Per-unit and delta-cached like the scatter view (server `build_waveform_frame`
+sends each unit's sparse-channel templates with per-unit channel lists + float
+offsets in one flat buffer).
+
+- **Scale to the contact pitch**: compute the median nearest-neighbour channel
+  distance once; waveform width ≈ 0.7·pitch, default height ≈ 0.8·pitch·gain /
+  global-|template|-max. Scaling to a *global* amplitude max keeps units
+  comparable but flattens small-amplitude units — hence the gain control.
+- **flipY orientation**: world +y is down, and templates are drawn `cy - val·ys`
+  so troughs (negative) deflect downward (conventional).
+- **Tetrode caveat**: degenerate geometry (near-co-located contacts) makes
+  templates overlap; fine for NP-like probes, needs a spread fallback for real
+  tetrodes.
+
+## Amplitude gain: hover-targeted +/- (wheel is taken by zoom)
+
+`gainControl.ts::attachGainKeys(canvas, bump)` adds a vertical gain to the
+amplitude views. The mouse wheel is pan/zoom, so `+`/`-`/`=` adjust the gain of
+whichever canvas the pointer is **hovering** (pointerenter/leave flag + a window
+keydown listener that no-ops unless hovered — so it never fights text inputs).
+`components/GainControl.tsx` is the discoverable corner `− 1.30× +` companion.
+
+Pattern for "redraw on a control change without new data": cache the last render
+inputs on the view (`lastFrame` for traces; `units`/`geom` for waveforms) and
+have `bumpGain` recompute from them. The view reports the new gain back through an
+`onGain` callback so the React corner readout stays in sync with the keys.
