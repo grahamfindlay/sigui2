@@ -10,14 +10,14 @@ import { TracePane } from "./components/TracePane";
 import { ScatterPane } from "./components/ScatterPane";
 import { HeatmapPane } from "./components/HeatmapPane";
 import { HistogramPane } from "./components/HistogramPane";
-import { UnitList } from "./components/UnitList";
+import { UnitTable } from "./components/UnitTable";
 
 // Stress is a fixed GPU benchmark switch (?stress=N); read once at module load.
 const STRESS = parseInt(new URLSearchParams(location.search).get("stress") || "0", 10);
 
 function UnitsPanel() {
   const { meta, visibleUnits, setVisibleUnits } = useSigui();
-  return <UnitList meta={meta} visibleUnits={visibleUnits} setVisibleUnits={setVisibleUnits} />;
+  return <UnitTable meta={meta} visibleUnits={visibleUnits} setVisibleUnits={setVisibleUnits} />;
 }
 function TracePanel() {
   const { sock, meta } = useSigui();

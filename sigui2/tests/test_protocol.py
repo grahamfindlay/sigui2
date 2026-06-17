@@ -60,6 +60,14 @@ def test_metadata(client):
     assert meta["has_spike_amplitudes"] is True
     assert len(meta["unit_ids"]) == 8
 
+    # Unit-list table: always carries num_spikes + firing_rate, one row per unit.
+    assert meta["metric_columns"][:2] == ["num_spikes", "firing_rate"]
+    assert set(str(k) for k in meta["unit_metrics"]) == set(str(u) for u in meta["unit_ids"])
+    u0 = meta["unit_ids"][0]
+    row = meta["unit_metrics"][str(u0)] if str(u0) in meta["unit_metrics"] else meta["unit_metrics"][u0]
+    assert isinstance(row["num_spikes"], int) and row["num_spikes"] > 0
+    assert isinstance(row["firing_rate"], (int, float)) and row["firing_rate"] > 0
+
 
 def test_trace_frame_binned(client):
     # 1 s @ 30 kHz over 1000 px = 30 samples/pixel -> binned min/max envelope.

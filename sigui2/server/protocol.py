@@ -10,12 +10,65 @@ the full view set.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 from .encode import FrameBuilder
 from .lod import scatter as lod_scatter
 from .lod import traces as lod_traces
 from .session import Session
+
+try:  # the curated default column subset sigui shows; used only for ordering
+    from spikeinterface.widgets.sorting_summary import (
+        _default_displayed_unit_properties as _DEFAULT_DISPLAYED,
+    )
+except Exception:  # pragma: no cover - fallback if the private name moves
+    _DEFAULT_DISPLAYED = ["firing_rate", "num_spikes", "x", "y", "snr"]
+
+
+def _json_num(v):
+    """Coerce a pandas/numpy scalar to a JSON-safe value (NaN/inf -> None)."""
+    if v is None:
+        return None
+    if isinstance(v, (bool, np.bool_)):
+        return bool(v)
+    if isinstance(v, (int, np.integer)):
+        return int(v)
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    return None if (math.isnan(f) or math.isinf(f)) else f
+
+
+def build_units_table(session: Session) -> dict:
+    """Per-unit table for the unit-list view: column order + per-unit values.
+
+    Always includes ``num_spikes`` and ``firing_rate`` (derived from the
+    Controller, so they exist even when no quality-metrics extension is present),
+    then the analyzer's units_table columns ordered by sigui's default-displayed
+    subset first. Values are JSON-safe (NaN -> None). Keyed by unit id like
+    ``unit_colors`` so the client joins by id.
+    """
+    ctrl = session.controller
+    df = ctrl.get_units_table()
+    dur = ctrl.get_num_samples(0) / session.sampling_frequency
+
+    base = ["num_spikes", "firing_rate"]
+    df_cols = [c for c in df.columns if c not in base]
+    preferred = [c for c in _DEFAULT_DISPLAYED if c in df_cols]
+    columns = base + preferred + [c for c in df_cols if c not in preferred]
+
+    rows: dict = {}
+    for u in ctrl.unit_ids:
+        ns = ctrl.num_spikes.get(u, ctrl.num_spikes.get(str(u), 0))
+        row = {"num_spikes": int(ns), "firing_rate": (int(ns) / dur) if dur > 0 else 0.0}
+        for c in df_cols:
+            row[c] = _json_num(df.loc[u, c])
+        key = int(u) if isinstance(u, np.integer) else u
+        rows[key] = row
+    return {"columns": columns, "rows": rows}
 
 
 def build_metadata(session: Session) -> dict:
@@ -32,6 +85,8 @@ def build_metadata(session: Session) -> dict:
         key = int(u) if isinstance(u, np.integer) else u
         colors[key] = [int(v) for v in rgba]
 
+    units = build_units_table(session)
+
     return {
         "type": "metadata",
         "num_units": len(unit_ids),
@@ -43,6 +98,8 @@ def build_metadata(session: Session) -> dict:
         "unit_colors": colors,
         "default_visible_units": [unit_ids[0]] if unit_ids else [],
         "has_spike_amplitudes": session.spike_amplitudes() is not None,
+        "metric_columns": units["columns"],
+        "unit_metrics": units["rows"],
     }
 
 
