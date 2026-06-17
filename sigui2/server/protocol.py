@@ -42,6 +42,43 @@ def _json_num(v):
     return None if (math.isnan(f) or math.isinf(f)) else f
 
 
+def _uid(u):
+    """JSON-friendly unit id (numpy int -> int; numpy/py str stays str)."""
+    return int(u) if isinstance(u, np.integer) else (str(u) if isinstance(u, np.str_) else u)
+
+
+def build_curation_state(session: Session) -> dict:
+    """The manual-curation overlay the client renders on the unit table.
+
+    Curation never changes ``unit_ids`` (it is applied only at export), so this
+    is a pure annotation layer: which units are merged/removed/split and their
+    manual labels, plus the available label categories.
+    """
+    ctrl = session.controller
+    cd = ctrl.curation_data or {}
+
+    labels: dict = {}
+    for entry in cd.get("manual_labels", []):
+        per_cat = {}
+        src = entry.get("labels", {k: v for k, v in entry.items() if k != "unit_id"})
+        for cat, vals in src.items():
+            if isinstance(vals, list) and vals:
+                per_cat[cat] = vals[0]
+        if per_cat:
+            labels[_uid(entry["unit_id"])] = per_cat
+
+    return {
+        "type": "curation",
+        "label_definitions": cd.get("label_definitions", {}),
+        "merges": [[_uid(u) for u in m["unit_ids"]] for m in cd.get("merges", [])],
+        "removed": [_uid(u) for u in cd.get("removed", [])],
+        "splits": [_uid(s["unit_id"]) for s in cd.get("splits", [])],
+        "labels": labels,
+        "can_save": ctrl.analyzer.format != "memory",
+        "saved": bool(getattr(ctrl, "current_curation_saved", True)),
+    }
+
+
 def build_units_table(session: Session) -> dict:
     """Per-unit table for the unit-list view: column order + per-unit values.
 
@@ -100,6 +137,7 @@ def build_metadata(session: Session) -> dict:
         "has_spike_amplitudes": session.spike_amplitudes() is not None,
         "metric_columns": units["columns"],
         "unit_metrics": units["rows"],
+        "curation": build_curation_state(session),
     }
 
 

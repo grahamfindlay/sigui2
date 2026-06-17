@@ -13,4 +13,21 @@ export interface Meta {
   // Unit-list table: ordered column names + per-unit values keyed by unit id.
   metric_columns: string[];
   unit_metrics: Record<string, Record<string, number | null>>;
+  curation: CurationState;
+}
+
+export interface LabelDefinition {
+  label_options: string[];
+  exclusive: boolean;
+}
+
+// Manual-curation overlay (annotations; does not change unit_ids).
+export interface CurationState {
+  label_definitions: Record<string, LabelDefinition>;
+  merges: UnitId[][];
+  removed: UnitId[];
+  splits: UnitId[];
+  labels: Record<string, Record<string, string>>; // unit id -> {category: label}
+  can_save: boolean;
+  saved: boolean;
 }

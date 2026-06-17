@@ -19,13 +19,19 @@ from . import protocol
 from .schema import (
     ControlMessage,
     CorrelogramRequest,
+    DeleteUnits,
     Hello,
     HeatmapRequest,
     IsiRequest,
+    LabelUnits,
+    MergeUnits,
+    RestoreUnits,
+    SaveCuration,
     ScatterRequest,
     SelectSpikes,
     SetVisibleUnits,
     TraceViewport,
+    UnmergeUnits,
 )
 from .session import Session
 
@@ -84,6 +90,61 @@ async def _dispatch(ws: WebSocket, session: Session, msg) -> None:
         )
         frame = await anyio.to_thread.run_sync(builder, session, unit_ids)
         await ws.send_bytes(frame)
+
+    elif isinstance(msg, (MergeUnits, UnmergeUnits, DeleteUnits, RestoreUnits,
+                          LabelUnits, SaveCuration)):
+        _apply_curation(session, msg)
+        # Mutations are cheap (list ops); echo the full curation state so the
+        # client re-syncs regardless of whether the action was a no-op.
+        await ws.send_json(protocol.build_curation_state(session))
+
+
+def _unmerge(ctrl, unit_ids: list) -> None:
+    """Remove ``unit_ids`` from their merge group(s).
+
+    The Controller's ``remove_units_from_merge_if_possible`` only acts when >=2
+    units would remain (a merge needs >=2 members), so removing all-but-one (or
+    all) of a group is otherwise a silent no-op. Here, if the removal would leave
+    fewer than 2 members we **dissolve the whole group** (every member becomes
+    un-merged), which is the intuitive result.
+    """
+    sel = {str(u) for u in unit_ids}
+    merges = ctrl.curation_data["merges"]
+    dissolve_idx = []
+    for i, m in enumerate(merges):
+        hit = [u for u in m["unit_ids"] if str(u) in sel]
+        if not hit:
+            continue
+        if len(m["unit_ids"]) - len(hit) >= 2:
+            ctrl.remove_units_from_merge_if_possible(hit)  # partial; group survives
+        else:
+            dissolve_idx.append(i)
+    # Partial removals don't change list length, so these indices stay valid.
+    if dissolve_idx:
+        ctrl.make_manual_restore_merge(dissolve_idx)
+
+
+def _apply_curation(session: Session, msg) -> None:
+    ctrl = session.controller
+    if isinstance(msg, SaveCuration):
+        if ctrl.analyzer.format != "memory":
+            ctrl.save_curation_in_analyzer()
+        return
+
+    unit_ids = session.to_unit_ids(msg.unit_ids)
+    if isinstance(msg, MergeUnits):
+        ctrl.make_manual_merge_if_possible(unit_ids)
+    elif isinstance(msg, UnmergeUnits):
+        _unmerge(ctrl, unit_ids)
+    elif isinstance(msg, DeleteUnits):
+        ctrl.make_manual_delete_if_possible(unit_ids)
+    elif isinstance(msg, RestoreUnits):
+        ctrl.make_manual_restore(unit_ids)
+    elif isinstance(msg, LabelUnits):
+        for u in unit_ids:
+            ctrl.set_label_to_unit(u, msg.category, msg.label)
+    # any mutation un-saves the curation
+    ctrl.current_curation_saved = False
 
 
 def create_app(session: Session) -> FastAPI:

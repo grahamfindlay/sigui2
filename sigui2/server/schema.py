@@ -56,10 +56,45 @@ class IsiRequest(BaseModel):
     unit_ids: list[Any] | None = None
 
 
+# --- curation control plane (mutations -> server echoes a "curation" state) ---
+
+
+class MergeUnits(BaseModel):
+    type: Literal["merge_units"]
+    unit_ids: list[Any]
+
+
+class UnmergeUnits(BaseModel):
+    type: Literal["unmerge_units"]
+    unit_ids: list[Any]
+
+
+class DeleteUnits(BaseModel):
+    type: Literal["delete_units"]
+    unit_ids: list[Any]
+
+
+class RestoreUnits(BaseModel):
+    type: Literal["restore_units"]
+    unit_ids: list[Any]
+
+
+class LabelUnits(BaseModel):
+    type: Literal["label_units"]
+    unit_ids: list[Any]
+    category: str
+    label: str | None = None  # None clears the category for those units
+
+
+class SaveCuration(BaseModel):
+    type: Literal["save_curation"]
+
+
 ControlMessage = Annotated[
     Union[
         Hello, SetVisibleUnits, TraceViewport, ScatterRequest, SelectSpikes,
         HeatmapRequest, CorrelogramRequest, IsiRequest,
+        MergeUnits, UnmergeUnits, DeleteUnits, RestoreUnits, LabelUnits, SaveCuration,
     ],
     Field(discriminator="type"),
 ]

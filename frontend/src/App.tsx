@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DockviewReact, DockviewReadyEvent } from "dockview";
 import { Sock } from "./socket";
-import { Meta, UnitId } from "./types";
+import { CurationState, Meta, UnitId } from "./types";
 import { SiguiContext } from "./SiguiContext";
 import { panelComponents, buildDefaultLayout } from "./panels";
 
@@ -19,6 +19,7 @@ export function App() {
   const sockRef = useRef<Sock | null>(null);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [visibleUnits, setVisibleUnits] = useState<UnitId[]>([]);
+  const [curation, setCuration] = useState<CurationState | null>(null);
   const [gpu] = useState(gpuInfo);
 
   useEffect(() => {
@@ -26,10 +27,15 @@ export function App() {
     sockRef.current = sock;
     sock.on("metadata", (m: Meta) => {
       setMeta(m);
+      setCuration(m.curation);
       setVisibleUnits(m.unit_ids.slice(0, Math.min(8, m.unit_ids.length)));
     });
+    // Curation mutations echo a fresh state; reflect it everywhere.
+    sock.on("curation", (c: CurationState) => setCuration(c));
     sock.ready.then(() => sock.send({ type: "hello" }));
   }, []);
+
+  const curate = (msg: unknown) => sockRef.current?.send(msg);
 
   // Keep the server's Controller visibility in sync with the UI. Off the data
   // hot path now (views fetch their own per-unit deltas); kept so selection/
@@ -40,12 +46,12 @@ export function App() {
     }
   }, [visibleUnits, meta]);
 
-  // Context value is rebuilt when state changes so panels see fresh visibility.
+  // Context value is rebuilt when state changes so panels see fresh state.
   const ctx = useMemo(
-    () => (meta && sockRef.current
-      ? { sock: sockRef.current, meta, visibleUnits, setVisibleUnits }
+    () => (meta && curation && sockRef.current
+      ? { sock: sockRef.current, meta, visibleUnits, setVisibleUnits, curation, curate }
       : null),
-    [meta, visibleUnits],
+    [meta, visibleUnits, curation],
   );
 
   if (!ctx || !meta) return <div style={{ padding: 12 }}>connecting…</div>;

@@ -173,6 +173,66 @@ def test_heatmap_frame(client):
     assert header["vmin"] <= header["vmax"]
 
 
+def test_curation_merge_label_delete_restore(client):
+    """Curation mutations round-trip and the echoed state reflects them."""
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "hello"})
+        meta = ws.receive_json()
+        assert "quality" in meta["curation"]["label_definitions"]
+        u0, u1, u2 = meta["unit_ids"][:3]
+
+        def act(m):
+            ws.send_json(m)
+            c = ws.receive_json()
+            assert c["type"] == "curation"
+            return c
+
+        c = act({"type": "merge_units", "unit_ids": [u0, u1]})
+        assert any(set(map(str, g)) == {str(u0), str(u1)} for g in c["merges"])
+        assert c["saved"] is False  # any mutation un-saves
+
+        c = act({"type": "label_units", "unit_ids": [u2], "category": "quality", "label": "good"})
+        assert c["labels"][str(u2)]["quality"] == "good"
+
+        c = act({"type": "delete_units", "unit_ids": [u2]})
+        assert str(u2) in [str(x) for x in c["removed"]]
+
+        c = act({"type": "restore_units", "unit_ids": [u2]})
+        assert str(u2) not in [str(x) for x in c["removed"]]
+
+        # clearing a label drops the unit from the labels map
+        c = act({"type": "label_units", "unit_ids": [u2], "category": "quality", "label": None})
+        assert str(u2) not in c["labels"]
+
+
+def test_curation_unmerge_partial_and_dissolve(client):
+    """Unmerging a subset keeps the group (>=2 remain); unmerging down to <2
+    dissolves the whole group. Uses units 4-7 to stay independent of the other
+    curation test (shared module-scoped Session)."""
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "hello"})
+        a, b, c_, d = ws.receive_json()["unit_ids"][4:8]
+
+        def act(m):
+            ws.send_json(m)
+            r = ws.receive_json()
+            assert r["type"] == "curation"
+            return r
+
+        act({"type": "merge_units", "unit_ids": [a, b, c_, d]})
+
+        # remove 2 of 4 -> the other 2 stay merged
+        r = act({"type": "unmerge_units", "unit_ids": [a, b]})
+        grp = next((set(map(str, g)) for g in r["merges"]
+                    if str(c_) in [str(x) for x in g]), None)
+        assert grp == {str(c_), str(d)}
+
+        # remove 1 more -> only 1 would remain -> dissolve the whole group
+        r = act({"type": "unmerge_units", "unit_ids": [c_]})
+        flat = {str(x) for g in r["merges"] for x in g}
+        assert not ({str(a), str(b), str(c_), str(d)} & flat)
+
+
 def test_isi_and_correlogram_frames(client):
     with client.websocket_connect("/ws") as ws:
         ws.send_json({"type": "hello"})

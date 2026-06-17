@@ -46,7 +46,8 @@ class Session:
 
         self.analyzer = analyzer
         self.controller = Controller(
-            analyzer, backend="web", with_traces=with_traces, verbose=verbose
+            analyzer, backend="web", with_traces=with_traces, verbose=verbose,
+            curation=True,  # enable the manual-curation data model (merges/labels/...)
         )
         # Attach our handler so any future view wiring / curation notify has a
         # target (Controller's "web" branch leaves signal_handler unset).
@@ -68,3 +69,13 @@ class Session:
     def unit_color_rgba_u8(self, unit_id) -> np.ndarray:
         c = np.asarray(self.controller.get_unit_color(unit_id), dtype="float64")
         return (c * 255).astype("uint8")
+
+    def to_unit_ids(self, ids: list) -> list:
+        """Map client-sent unit ids (JSON ints/strings) to the Controller's own
+        unit-id objects (which may be numpy str/int), matched by ``str()``.
+
+        Curation methods compare against ``curation_data`` lists built from the
+        analyzer's unit ids, so identity/type must line up.
+        """
+        by_str = {str(u): u for u in self.controller.unit_ids}
+        return [by_str[str(i)] for i in ids if str(i) in by_str]

@@ -4,13 +4,15 @@
 // sock/meta/visibility from here instead of receiving props from App.
 import { createContext, useContext } from "react";
 import { Sock } from "./socket";
-import { Meta, UnitId } from "./types";
+import { CurationState, Meta, UnitId } from "./types";
 
 export interface SiguiCtx {
   sock: Sock;
   meta: Meta;
   visibleUnits: UnitId[];
   setVisibleUnits: (u: UnitId[]) => void;
+  curation: CurationState;
+  curate: (msg: unknown) => void; // send a curation control message
 }
 
 export const SiguiContext = createContext<SiguiCtx | null>(null);
