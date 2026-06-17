@@ -41,6 +41,16 @@ class SelectSpikes(BaseModel):
     indices: list[int] = Field(default_factory=list)
 
 
+class SelectRegion(BaseModel):
+    type: Literal["select_region"]
+    view: str = "amplitude"
+    # Lasso vertices in scatter world coords ([x=time_s, y=amplitude], ...). The
+    # server hit-tests the *full* per-spike arrays of ``unit_ids`` (exact, not the
+    # decimated working set the client renders), so the selection is authoritative.
+    polygon: list[list[float]] = Field(default_factory=list)
+    unit_ids: list[Any] | None = None  # restrict to these units (visible by default)
+
+
 class HeatmapRequest(BaseModel):
     type: Literal["heatmap_request"]
     view: str = "similarity"
@@ -91,6 +101,19 @@ class LabelUnits(BaseModel):
     label: str | None = None  # None clears the category for those units
 
 
+class SplitUnits(BaseModel):
+    type: Literal["split_units"]
+    # Split using the current server-side spike selection (from the last
+    # select_region), grouped by unit so each affected unit is split into
+    # (selected-in-it, rest). Optionally restrict to these unit ids.
+    unit_ids: list[Any] | None = None
+
+
+class UnsplitUnits(BaseModel):
+    type: Literal["unsplit_units"]
+    unit_ids: list[Any]
+
+
 class SaveCuration(BaseModel):
     type: Literal["save_curation"]
 
@@ -98,8 +121,9 @@ class SaveCuration(BaseModel):
 ControlMessage = Annotated[
     Union[
         Hello, SetVisibleUnits, TraceViewport, ScatterRequest, SelectSpikes,
-        HeatmapRequest, CorrelogramRequest, IsiRequest, WaveformRequest,
-        MergeUnits, UnmergeUnits, DeleteUnits, RestoreUnits, LabelUnits, SaveCuration,
+        SelectRegion, HeatmapRequest, CorrelogramRequest, IsiRequest, WaveformRequest,
+        MergeUnits, UnmergeUnits, DeleteUnits, RestoreUnits, LabelUnits,
+        SplitUnits, UnsplitUnits, SaveCuration,
     ],
     Field(discriminator="type"),
 ]

@@ -43,8 +43,13 @@ not a sigui2 limitation.
 Control messages (client → server) mutate the Controller; the server echoes the
 full `curation` state after every mutation so the client re-syncs even on no-ops:
 `merge_units`, `unmerge_units`, `delete_units`, `restore_units`, `label_units`
-(category/label; label=null clears), `save_curation`. Client unit ids are mapped
-back to the Controller's own id objects by `str()` (`Session.to_unit_ids`).
+(category/label; label=null clears), `split_units`, `unsplit_units`,
+`save_curation`. Client unit ids are mapped back to the Controller's own id
+objects by `str()` (`Session.to_unit_ids`).
+
+`select_region` is the one curation-adjacent message that does **not** echo
+`curation`: it sets the server spike selection from a lasso polygon and echoes a
+`selection` summary instead (see "Split via region selection").
 
 The `curation` state = `{label_definitions, merges, removed, splits, labels,
 can_save, saved}`. It is also embedded in the initial `metadata`. `can_save` is
@@ -62,8 +67,42 @@ group** via `make_manual_restore_merge`. This is a sigui2 UX choice — the upst
 primitive is correct and unchanged (see the workspace memory
 `project_sigui_unmerge_upstream`).
 
-## Deferred: split
+## Split via region selection
 
-`make_manual_split_if_possible` needs a **spike-level selection** (which spikes of
-the unit form the split), i.e. lasso/box selection on the scatter. sigui2 has no
-spike selection UI yet, so split is deferred.
+`make_manual_split_if_possible(unit_id)` reads the Controller's **global spike
+selection** and requires every selected spike to belong to `unit_id`, then records
+`{"unit_id", "mode": "indices", "indices": [[within-unit indices]]}` — a 2-way
+split (selected spikes vs the rest). sigui2 drives it from a **lasso** on the
+amplitude scatter:
+
+1. `select_region` carries the lasso polygon in scatter world coords
+   (`[x=time_s, y=amplitude]`). The server hit-tests the **full** per-spike arrays
+   of the visible units (`lod/scatter.points_in_polygon`, vectorized even-odd) —
+   exact, not the decimated working set the client renders — and calls
+   `set_indices_spike_selected`. It echoes `{type:"selection", n, per_unit}`
+   (counts only; the client highlights its own rendered points locally, so the
+   index list never goes back over the wire).
+2. `split_units` splits **every unit the selection covers**: it groups the global
+   selection by `spikes["unit_index"]` and, for each unit, sets the selection to
+   that unit's subset and calls `make_manual_split_if_possible`, restoring the
+   full selection afterward (`app.py::_split`). Optional `unit_ids` restricts it.
+3. `unsplit_units` removes a unit's pending split (`make_manual_restore_split`),
+   mirroring unmerge/restore.
+
+A lassoed unit that is removed / in a merge / not visible is silently skipped by
+the Controller (intended).
+
+### You cannot merge a split *half* in the same curation pass
+
+A split's halves have **no unit id** until the curation is applied — the split is
+just sub-groups of the original unit's spikes. Merge/split are also mutually
+exclusive per unit (`make_manual_merge_if_possible` refuses any unit in `splits`,
+controller.py:1001-1006; `make_manual_split_if_possible` refuses any unit in a
+merge). So "split unit X, then merge half of it with unit Y" is **not expressible**
+in one annotation pass — in SI's curation module *or* spikeinterface-gui, since
+both use this same deferred-apply model. The path would be **apply the curation**
+(materializing the split halves as real new ids) → reload that analyzer → curate
+again. (phy supports split-then-merge natively because it mutates a *live*
+clustering with immediate new ids + undo/redo, trading away replayability.) A
+future sigui2 "apply & continue" action would unlock this generally. Shelved as a
+nice-to-have (user, 2026-06-17).

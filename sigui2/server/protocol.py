@@ -238,6 +238,51 @@ def build_scatter_frame(
     return fb.build(header)
 
 
+def build_selection_state(session: Session) -> dict:
+    """The current spike selection summarized for the client.
+
+    The client only needs the *count* (overall and per unit) to drive the UI
+    (selection readout + which units the split would affect); it highlights its
+    own rendered points locally, so we never ship the (potentially huge) index
+    list back.
+    """
+    ctrl = session.controller
+    sel = np.asarray(ctrl.get_indices_spike_selected())
+    per_unit: dict = {}
+    if sel.size:
+        uidx = ctrl.spikes["unit_index"][sel]
+        vals, counts = np.unique(uidx, return_counts=True)
+        for ui, c in zip(vals, counts):
+            per_unit[_uid(ctrl.unit_ids[int(ui)])] = int(c)
+    return {"type": "selection", "n": int(sel.size), "per_unit": per_unit}
+
+
+def select_region(
+    session: Session, view: str, polygon: list, unit_ids: list | None
+) -> dict:
+    """Set the spike selection to every spike of ``unit_ids`` inside ``polygon``.
+
+    Exact (tests the full per-spike arrays, not the decimated working set the
+    client renders), so a subsequent split uses precisely the lassoed spikes.
+    Returns the selection summary (see ``build_selection_state``).
+    """
+    ctrl = session.controller
+    units = session.to_unit_ids(unit_ids) if unit_ids else list(ctrl.get_visible_unit_ids())
+    poly = np.asarray(polygon, dtype="float64")
+
+    y_all = session.spike_amplitudes() if view == "amplitude" else None
+    if poly.shape[0] < 3 or not units or y_all is None:
+        ctrl.set_indices_spike_selected(np.array([], dtype="int64"))
+        return build_selection_state(session)
+
+    x_all = session.spike_times_seconds()
+    parts = [np.asarray(ctrl.get_spike_indices(u)) for u in units]
+    gidx = np.concatenate(parts) if parts else np.array([], dtype="int64")
+    inside = lod_scatter.points_in_polygon(x_all[gidx], y_all[gidx], poly)
+    ctrl.set_indices_spike_selected(gidx[inside].astype("int64"))
+    return build_selection_state(session)
+
+
 def _unit_index_map(ctrl) -> dict[str, int]:
     return {str(u): i for i, u in enumerate(ctrl.unit_ids)}
 

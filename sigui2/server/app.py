@@ -28,10 +28,13 @@ from .schema import (
     RestoreUnits,
     SaveCuration,
     ScatterRequest,
+    SelectRegion,
     SelectSpikes,
     SetVisibleUnits,
+    SplitUnits,
     TraceViewport,
     UnmergeUnits,
+    UnsplitUnits,
     WaveformRequest,
 )
 from .session import Session
@@ -76,6 +79,12 @@ async def _dispatch(ws: WebSocket, session: Session, msg) -> None:
             "n": len(ctrl.get_indices_spike_selected()),
         })
 
+    elif isinstance(msg, SelectRegion):
+        state = await anyio.to_thread.run_sync(
+            protocol.select_region, session, msg.view, msg.polygon, msg.unit_ids,
+        )
+        await ws.send_json(state)
+
     elif isinstance(msg, HeatmapRequest):
         frame = await anyio.to_thread.run_sync(
             protocol.build_heatmap_frame, session, msg.view,
@@ -100,7 +109,7 @@ async def _dispatch(ws: WebSocket, session: Session, msg) -> None:
         await ws.send_bytes(frame)
 
     elif isinstance(msg, (MergeUnits, UnmergeUnits, DeleteUnits, RestoreUnits,
-                          LabelUnits, SaveCuration)):
+                          LabelUnits, SplitUnits, UnsplitUnits, SaveCuration)):
         _apply_curation(session, msg)
         # Mutations are cheap (list ops); echo the full curation state so the
         # client re-syncs regardless of whether the action was a no-op.
@@ -132,11 +141,56 @@ def _unmerge(ctrl, unit_ids: list) -> None:
         ctrl.make_manual_restore_merge(dissolve_idx)
 
 
+def _split(ctrl, restrict_unit_ids: list | None = None) -> None:
+    """Split each unit covered by the current spike selection.
+
+    ``make_manual_split_if_possible(unit_id)`` reads the *global* selection and
+    requires every selected spike to belong to ``unit_id``. A lasso can span
+    several units, so we group the selection by unit and split each one with its
+    own subset (selected-in-it vs the rest), restoring the full selection after.
+    Units that are removed / in a merge / not visible are silently skipped by the
+    Controller, which is the intended behavior.
+    """
+    import numpy as np
+
+    sel = np.asarray(ctrl.get_indices_spike_selected())
+    if sel.size == 0:
+        return
+    uidx = ctrl.spikes["unit_index"][sel]
+    restrict = None if restrict_unit_ids is None else {str(u) for u in restrict_unit_ids}
+    try:
+        for ui in np.unique(uidx):
+            unit_id = ctrl.unit_ids[int(ui)]
+            if restrict is not None and str(unit_id) not in restrict:
+                continue
+            ctrl.set_indices_spike_selected(sel[uidx == ui])
+            ctrl.make_manual_split_if_possible(unit_id)
+    finally:
+        ctrl.set_indices_spike_selected(sel)
+
+
+def _unsplit(ctrl, unit_ids: list) -> None:
+    """Remove any pending split(s) for ``unit_ids`` (mirror of unmerge/restore)."""
+    sel = {str(u) for u in unit_ids}
+    splits = ctrl.curation_data["splits"]
+    idx = [i for i, s in enumerate(splits) if str(s["unit_id"]) in sel]
+    if idx:
+        ctrl.make_manual_restore_split(idx)
+
+
 def _apply_curation(session: Session, msg) -> None:
     ctrl = session.controller
     if isinstance(msg, SaveCuration):
         if ctrl.analyzer.format != "memory":
             ctrl.save_curation_in_analyzer()
+        return
+
+    # Split uses the current selection; its unit_ids (if any) only *restrict* it
+    # and may be None, so handle it before the mandatory id-mapping below.
+    if isinstance(msg, SplitUnits):
+        restrict = session.to_unit_ids(msg.unit_ids) if msg.unit_ids else None
+        _split(ctrl, restrict)
+        ctrl.current_curation_saved = False
         return
 
     unit_ids = session.to_unit_ids(msg.unit_ids)
@@ -148,6 +202,8 @@ def _apply_curation(session: Session, msg) -> None:
         ctrl.make_manual_delete_if_possible(unit_ids)
     elif isinstance(msg, RestoreUnits):
         ctrl.make_manual_restore(unit_ids)
+    elif isinstance(msg, UnsplitUnits):
+        _unsplit(ctrl, unit_ids)
     elif isinstance(msg, LabelUnits):
         for u in unit_ids:
             ctrl.set_label_to_unit(u, msg.category, msg.label)

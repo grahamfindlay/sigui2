@@ -4,7 +4,7 @@
 // sock/meta/visibility from here instead of receiving props from App.
 import { createContext, useContext } from "react";
 import { Sock } from "./socket";
-import { CurationState, Meta, UnitId } from "./types";
+import { CurationState, Meta, Selection, UnitId } from "./types";
 
 export interface SiguiCtx {
   sock: Sock;
@@ -13,6 +13,10 @@ export interface SiguiCtx {
   setVisibleUnits: (u: UnitId[]) => void;
   curation: CurationState;
   curate: (msg: unknown) => void; // send a curation control message
+  // Current scatter region selection (drives the split action + readout).
+  selection: Selection | null;
+  clearSelection: () => void; // drop the selection everywhere (also clears the lasso)
+  selectionNonce: number; // bumps on clearSelection so the scatter wipes its highlight
 }
 
 export const SiguiContext = createContext<SiguiCtx | null>(null);

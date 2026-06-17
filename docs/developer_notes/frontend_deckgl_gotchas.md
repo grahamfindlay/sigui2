@@ -190,3 +190,35 @@ Pattern for "redraw on a control change without new data": cache the last render
 inputs on the view (`lastFrame` for traces; `units`/`geom` for waveforms) and
 have `bumpGain` recompute from them. The view reports the new gain back through an
 `onGain` callback so the React corner readout stays in sync with the keys.
+
+## Lasso / region select: a DOM overlay, NOT deck's controller toggle
+
+To drag a freehand lasso on the scatter you must stop deck from panning. The
+**wrong** way is `deck.setProps({controller: false})` on lasso-enter: in practice
+it did not reliably disable pan/zoom, and it cannot change the cursor anyway —
+deck.gl manages the canvas cursor itself (it re-asserts `grab`/`grabbing` every
+render), so an inline `canvas.style.cursor = "crosshair"` gets overwritten.
+
+The robust pattern (standard for deck.gl custom drag tools) is a transparent
+**capture overlay** `<div>` over the canvas (`ScatterPane` renders it,
+`ScatterView` drives it):
+
+- Default `pointer-events: none` → pan/zoom + click-pick pass straight through to
+  the canvas. `setLassoMode(true)` flips it to `pointer-events: auto`, so the
+  overlay swallows every pointer event (deck's controller never sees them) and the
+  overlay's own `cursor: crosshair` shows. No deck controller toggling at all.
+- z-index: overlay at `1` (above the canvas), the corner lasso/clear control at
+  `2` (above the overlay, so it stays clickable while lassoing).
+- Lasso geometry: capture pointer path in client pixels, `unproject` each point
+  via `deck.getViewports()[0]` to **world coords** (here `x=time_s, y=amplitude`,
+  the same space as the scatter data), feed a `PolygonLayer` for the live outline.
+  Attach `pointermove`/`pointerup` to `window` (not the overlay) so a drag that
+  leaves the pane still tracks and finishes.
+- Immediate feedback vs authority: the view runs a **local** even-odd
+  point-in-polygon over its *rendered* (decimated) points to highlight instantly
+  (white overlay scatter), and in parallel hands the world polygon to the server
+  (`select_region`) for the **exact** selection over the full spike set. The
+  server count (not the local sample count) is what drives the split. The view
+  clears its highlight on any re-render (visibility change ⇒ stale selection); an
+  external clear (toolbar/post-split) flows through a `selectionNonce` the pane
+  watches, since the toolbar can't call the view directly.

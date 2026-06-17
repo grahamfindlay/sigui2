@@ -76,6 +76,38 @@ def build_working_set(
     return {"x": x, "y": y, "spike_index": spike_index, "ranges": ranges}
 
 
+def points_in_polygon(
+    px: np.ndarray, py: np.ndarray, polygon: np.ndarray
+) -> np.ndarray:
+    """Vectorized even-odd (ray-casting) point-in-polygon test.
+
+    ``px``/``py`` are the point coordinates (same world space as the scatter:
+    x = spike time in seconds, y = spike amplitude). ``polygon`` is ``(M, 2)``
+    vertices of an (implicitly closed) lasso. Returns a boolean mask over the
+    points. Dependency-free (no shapely/matplotlib); O(N*M), which is fine for a
+    one-shot lasso over the visible units' spikes.
+    """
+    poly = np.asarray(polygon, dtype="float64")
+    inside = np.zeros(px.shape, dtype=bool)
+    n = poly.shape[0]
+    if n < 3:
+        return inside
+    j = n - 1
+    # Horizontal edges (yj == yi) divide by ~0, but for those the straddle test
+    # is False so the quotient is discarded -- suppress the spurious overflow.
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        for i in range(n):
+            xi, yi = poly[i, 0], poly[i, 1]
+            xj, yj = poly[j, 0], poly[j, 1]
+            # edge straddles the ray at py, and the crossing is to the right of px
+            cond = ((yi > py) != (yj > py)) & (
+                px < (xj - xi) * (py - yi) / (yj - yi + 1e-300) + xi
+            )
+            inside ^= cond
+            j = i
+    return inside
+
+
 def density_image(
     x: np.ndarray,
     y: np.ndarray,

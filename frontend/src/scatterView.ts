@@ -1,27 +1,61 @@
 // Amplitude scatter: resident, pickable working set rendered with deck.gl.
+// Two interaction modes:
+//   * pan/zoom (deck controller) + single-click pick (default), and
+//   * lasso: drag a freehand polygon to region-select. The polygon is captured
+//     in screen pixels, unprojected to world coords (x=time_s, y=amplitude),
+//     and handed to `onLasso` so the caller can ask the server for the EXACT
+//     spikes inside it (the rendered set is only a per-unit decimated sample, so
+//     a local hit-test highlights immediately while the server stays the source
+//     of truth for the selection that drives a split).
 // Includes a `stress(n)` mode that renders n synthetic points and continuously
 // repaints, to measure the raw GPU ceiling on the user's display machine.
 import { Deck, OrthographicView } from "@deck.gl/core";
-import { ScatterplotLayer } from "@deck.gl/layers";
+import { ScatterplotLayer, PolygonLayer } from "@deck.gl/layers";
 import { Sock } from "./socket";
 
 export interface ScatterCallbacks {
   onFps?: (n: number) => void;
   onPick?: (globalSpikeIndex: number) => void;
+  onLasso?: (worldPolygon: [number, number][]) => void; // -> exact server query
+  onLassoLocal?: (sampledCount: number) => void; // immediate local highlight count
+}
+
+// Even-odd point-in-polygon (matches the server's test) over world coords.
+function pointInPolygon(x: number, y: number, poly: [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+    if (((yi > y) !== (yj > y)) && (x < ((xj - xi) * (y - yi)) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
 }
 
 export class ScatterView {
   private deck: Deck;
   private sock: Sock;
   private canvas: HTMLCanvasElement;
+  private overlay: HTMLElement;
+  private position: Float32Array = new Float32Array(0);
+  private _color: Uint8Array = new Uint8Array(0);
   private spikeIndex: Int32Array = new Int32Array(0);
   private cb: ScatterCallbacks;
   private version = 0;
   private fitted = false;
+  // lasso state
+  private lassoMode = false;
+  private drawing = false;
+  private path: [number, number][] = [];
+  private highlightPos: Float32Array | null = null;
 
-  constructor(canvas: HTMLCanvasElement, sock: Sock, cb: ScatterCallbacks = {}) {
+  constructor(
+    canvas: HTMLCanvasElement, overlay: HTMLElement, sock: Sock,
+    cb: ScatterCallbacks = {},
+  ) {
     this.sock = sock;
     this.canvas = canvas;
+    this.overlay = overlay;
     this.cb = cb;
     this.deck = new Deck({
       canvas,
@@ -31,6 +65,7 @@ export class ScatterView {
       useDevicePixels: true, // full HiDPI (fit was the real bottleneck, not pixels)
       pickingRadius: 8, // small points need a pick tolerance, else clicks miss
       onClick: (info: any) => {
+        if (this.lassoMode) return; // clicks belong to the lasso when it's active
         if (info && info.index >= 0 && this.spikeIndex.length) {
           const gi = this.spikeIndex[info.index];
           this.sock.send({ type: "select_spikes", indices: [gi] });
@@ -38,6 +73,9 @@ export class ScatterView {
         }
       },
     });
+    // Lasso pointer events come from the overlay (see setLassoMode), not the
+    // canvas, so they never reach deck's controller.
+    overlay.addEventListener("pointerdown", this.onDown);
     setInterval(() => this.reportFps(), 500);
   }
 
@@ -45,6 +83,92 @@ export class ScatterView {
     const fps = (this.deck as any).metrics?.fps;
     if (fps) this.cb.onFps?.(fps);
   }
+
+  // --- lasso ---------------------------------------------------------------
+
+  setLassoMode(on: boolean) {
+    this.lassoMode = on;
+    // The overlay swallows pointer events while lassoing, so deck's controller
+    // never sees them (no pan/zoom) and the overlay's own crosshair cursor
+    // shows. Toggling deck's `controller` prop alone is unreliable and wouldn't
+    // change the cursor (deck manages the canvas cursor itself). pointer-events:
+    // none when off lets pan/zoom + click-pick pass straight to the canvas.
+    this.overlay.style.pointerEvents = on ? "auto" : "none";
+    if (!on) this.drawing = false;
+  }
+
+  clearSelection() {
+    this.highlightPos = null;
+    this.path = [];
+    this.cb.onLassoLocal?.(0);
+    this.paint();
+  }
+
+  private toWorld(e: PointerEvent): [number, number] | null {
+    const vp = (this.deck as any).getViewports?.()[0];
+    if (!vp) return null;
+    const r = this.canvas.getBoundingClientRect();
+    const [x, y] = vp.unproject([e.clientX - r.left, e.clientY - r.top]);
+    return [x, y];
+  }
+
+  private onDown = (e: PointerEvent) => {
+    if (!this.lassoMode || e.button !== 0) return;
+    e.preventDefault();
+    const w = this.toWorld(e);
+    if (!w) return;
+    this.drawing = true;
+    this.path = [w];
+    this.highlightPos = null; // start fresh; previous highlight goes away
+    window.addEventListener("pointermove", this.onMove);
+    window.addEventListener("pointerup", this.onUp, { once: true });
+    this.paint();
+  };
+
+  private onMove = (e: PointerEvent) => {
+    if (!this.drawing) return;
+    const w = this.toWorld(e);
+    if (!w) return;
+    // Append on meaningful movement to keep the path light (~screen-pixel res).
+    const last = this.path[this.path.length - 1];
+    if (!last || Math.hypot(w[0] - last[0], w[1] - last[1]) > 0) this.path.push(w);
+    this.paint();
+  };
+
+  private onUp = () => {
+    window.removeEventListener("pointermove", this.onMove);
+    if (!this.drawing) return;
+    this.drawing = false;
+    if (this.path.length >= 3) {
+      this.highlightLocal();
+      this.cb.onLasso?.(this.path.slice());
+    } else {
+      this.path = [];
+      this.cb.onLassoLocal?.(0);
+    }
+    this.paint();
+  };
+
+  // Highlight the rendered (sampled) points inside the lasso for instant
+  // feedback. The authoritative selection (incl. non-sampled spikes) comes from
+  // the server via onLasso.
+  private highlightLocal() {
+    const pos = this.position;
+    const np = pos.length / 2;
+    const keep: number[] = [];
+    for (let i = 0; i < np; i++) {
+      if (pointInPolygon(pos[i * 2], pos[i * 2 + 1], this.path)) keep.push(i);
+    }
+    const hp = new Float32Array(keep.length * 2);
+    for (let k = 0; k < keep.length; k++) {
+      hp[k * 2] = pos[keep[k] * 2];
+      hp[k * 2 + 1] = pos[keep[k] * 2 + 1];
+    }
+    this.highlightPos = hp;
+    this.cb.onLassoLocal?.(keep.length);
+  }
+
+  // --- rendering -----------------------------------------------------------
 
   private fit(position: Float32Array) {
     let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
@@ -59,17 +183,17 @@ export class ScatterView {
     return { target: [(xmin + xmax) / 2, (ymin + ymax) / 2, 0], zoom: [zx, zy] };
   }
 
-  render(position: Float32Array, color: Uint8Array, spikeIndex: Int32Array) {
-    this.spikeIndex = spikeIndex;
-    const n = spikeIndex.length;
+  private composeLayers(): any[] {
+    const layers: any[] = [];
+    const n = this.spikeIndex.length;
     // New layer id per update so deck.gl fully recreates GPU buffers instead of
     // reusing them -- reusing leaves stale points/colors when the point count
     // shrinks (e.g. deselecting units).
-    const layer = new ScatterplotLayer({
-      id: `spikes-${++this.version}`,
+    layers.push(new ScatterplotLayer({
+      id: `spikes-${this.version}`,
       data: { length: n, attributes: {
-        getPosition: { value: position, size: 2 },
-        getFillColor: { value: color, size: 4 },
+        getPosition: { value: this.position, size: 2 },
+        getFillColor: { value: this._color, size: 4 },
       } },
       radiusUnits: "pixels",
       getRadius: 1.2,
@@ -78,8 +202,49 @@ export class ScatterView {
       filled: true,
       antialiasing: false, // halves fragment cost; edge AA is invisible at ~1px
       pickable: true,
-    });
-    const props: any = { layers: [layer] };
+    } as any));
+    if (this.highlightPos && this.highlightPos.length) {
+      layers.push(new ScatterplotLayer({
+        id: `sel-${this.version}`,
+        data: { length: this.highlightPos.length / 2, attributes: {
+          getPosition: { value: this.highlightPos, size: 2 },
+        } },
+        radiusUnits: "pixels", getRadius: 2.4, radiusMinPixels: 2,
+        stroked: false, filled: true, antialiasing: false,
+        getFillColor: [255, 255, 255, 235], pickable: false,
+      } as any));
+    }
+    if (this.path.length >= 2) {
+      layers.push(new PolygonLayer({
+        id: `lasso-${this.version}`,
+        data: [{ polygon: this.path }],
+        getPolygon: (d: any) => d.polygon,
+        stroked: true, filled: true,
+        getFillColor: [255, 235, 80, 25],
+        getLineColor: [255, 235, 80, 220],
+        getLineWidth: 1.5, lineWidthUnits: "pixels", pickable: false,
+      } as any));
+    }
+    return layers;
+  }
+
+  private paint() {
+    this.deck.setProps({ layers: this.composeLayers() });
+  }
+
+  render(position: Float32Array, color: Uint8Array, spikeIndex: Int32Array) {
+    this.version++;
+    this.position = position;
+    this._color = color;
+    this.spikeIndex = spikeIndex;
+    // The working set changed (units toggled / curation): any prior region
+    // selection is stale, so drop the highlight + lasso outline.
+    this.highlightPos = null;
+    this.path = [];
+    this.cb.onLassoLocal?.(0);
+
+    const n = spikeIndex.length;
+    const props: any = { layers: this.composeLayers() };
     // Fit once so toggling units doesn't reset the user's pan/zoom.
     if (!this.fitted && n > 0) {
       props.initialViewState = this.fit(position);

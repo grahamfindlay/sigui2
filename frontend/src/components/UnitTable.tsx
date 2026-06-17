@@ -39,6 +39,7 @@ export function UnitTable(
 ) {
   const visSet = useMemo(() => new Set(visibleUnits.map(String)), [visibleUnits]);
   const removedSet = useMemo(() => new Set(curation.removed.map(String)), [curation.removed]);
+  const splitSet = useMemo(() => new Set(curation.splits.map(String)), [curation.splits]);
   const mergeOf = useMemo(() => {
     const m = new Map<string, number>();
     curation.merges.forEach((grp, i) => grp.forEach((u) => m.set(String(u), i)));
@@ -170,6 +171,11 @@ export function UnitTable(
                   <span title={`merge group: ${curation.merges[grp].join(", ")}`}
                     style={{ flex: "0 0 auto", fontSize: 9, color: "#9bd", border: "1px solid #467",
                       borderRadius: 3, padding: "0 3px" }}>⧉{grp + 1}</span>
+                )}
+                {splitSet.has(k) && (
+                  <span title="has a pending split (lassoed spikes)"
+                    style={{ flex: "0 0 auto", fontSize: 9, color: "#fc9", border: "1px solid #764",
+                      borderRadius: 3, padding: "0 3px" }}>✂</span>
                 )}
               </div>
               <div style={cell}>

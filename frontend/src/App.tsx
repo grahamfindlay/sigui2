@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DockviewReact, DockviewReadyEvent } from "dockview";
 import { Sock } from "./socket";
-import { CurationState, Meta, UnitId } from "./types";
+import { CurationState, Meta, Selection, UnitId } from "./types";
 import { SiguiContext } from "./SiguiContext";
 import { panelComponents, buildDefaultLayout } from "./panels";
 
@@ -20,6 +20,8 @@ export function App() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [visibleUnits, setVisibleUnits] = useState<UnitId[]>([]);
   const [curation, setCuration] = useState<CurationState | null>(null);
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const [selectionNonce, setSelectionNonce] = useState(0);
   const [gpu] = useState(gpuInfo);
 
   useEffect(() => {
@@ -32,10 +34,22 @@ export function App() {
     });
     // Curation mutations echo a fresh state; reflect it everywhere.
     sock.on("curation", (c: CurationState) => setCuration(c));
+    // A scatter lasso (select_region) echoes the exact selection summary.
+    sock.on("selection", (s: Selection) => setSelection(s));
     sock.ready.then(() => sock.send({ type: "hello" }));
   }, []);
 
   const curate = (msg: unknown) => sockRef.current?.send(msg);
+  // Clear the selection everywhere; the nonce makes the scatter wipe its lasso
+  // highlight (which it owns) without a back-reference from here.
+  const clearSelection = () => {
+    setSelection(null);
+    setSelectionNonce((n) => n + 1);
+  };
+
+  // Toggling visibility changes the working set, so any region selection is now
+  // stale -- drop it (the scatter view clears its own highlight on re-render).
+  useEffect(() => { setSelection(null); }, [visibleUnits]);
 
   // Keep the server's Controller visibility in sync with the UI. Off the data
   // hot path now (views fetch their own per-unit deltas); kept so selection/
@@ -49,9 +63,10 @@ export function App() {
   // Context value is rebuilt when state changes so panels see fresh state.
   const ctx = useMemo(
     () => (meta && curation && sockRef.current
-      ? { sock: sockRef.current, meta, visibleUnits, setVisibleUnits, curation, curate }
+      ? { sock: sockRef.current, meta, visibleUnits, setVisibleUnits, curation, curate,
+          selection, clearSelection, selectionNonce }
       : null),
-    [meta, visibleUnits, curation],
+    [meta, visibleUnits, curation, selection, selectionNonce],
   );
 
   if (!ctx || !meta) return <div style={{ padding: 12 }}>connecting…</div>;

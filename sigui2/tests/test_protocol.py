@@ -163,6 +163,56 @@ def test_scatter_per_unit_determinism(client):
     assert np.array_equal(bboth["color"][lo0:hi0], b0["color"])
 
 
+def _rect(x0, x1, y0, y1):
+    """Axis-aligned rectangle polygon (CCW) for a lasso region query."""
+    return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+
+
+def test_select_region_exact_and_split(client):
+    """A lasso region selects the EXACT spikes inside it (full per-spike arrays,
+    not the decimated render), and a split turns the selection into a pending
+    per-unit split. Uses unit 3, which no other curation test touches (the merge
+    test leaves 0/1 merged; the unmerge test uses 4-7)."""
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "hello"})
+        meta = ws.receive_json()
+        u3 = meta["unit_ids"][3]
+        dur = meta["duration_s"]
+        nspk = meta["unit_metrics"][str(u3)]["num_spikes"]
+
+        ws.send_json({"type": "set_visible_units", "unit_ids": [u3]})
+        assert ws.receive_json()["type"] == "ack"
+
+        # A rectangle enclosing the whole plane selects EVERY spike of u3.
+        big = _rect(-1.0, dur + 1.0, -1e9, 1e9)
+        ws.send_json({"type": "select_region", "view": "amplitude",
+                      "polygon": big, "unit_ids": [u3]})
+        s = ws.receive_json()
+        assert s["type"] == "selection"
+        assert s["n"] == nspk                       # exact, > the working-set sample
+        assert s["per_unit"][str(u3)] == nspk
+
+        # A degenerate (<3-vertex) polygon clears the selection.
+        ws.send_json({"type": "select_region", "polygon": [[0, 0], [1, 1]],
+                      "unit_ids": [u3]})
+        assert ws.receive_json()["n"] == 0
+
+        # Re-select all, then split u3 into (selected, rest) -> a pending split.
+        ws.send_json({"type": "select_region", "view": "amplitude",
+                      "polygon": big, "unit_ids": [u3]})
+        assert ws.receive_json()["n"] == nspk
+        ws.send_json({"type": "split_units"})
+        c = ws.receive_json()
+        assert c["type"] == "curation"
+        assert str(u3) in [str(x) for x in c["splits"]]
+        assert c["saved"] is False
+
+        # Unsplit removes it again.
+        ws.send_json({"type": "unsplit_units", "unit_ids": [u3]})
+        c = ws.receive_json()
+        assert str(u3) not in [str(x) for x in c["splits"]]
+
+
 def test_waveform_frame(client):
     with client.websocket_connect("/ws") as ws:
         ws.send_json({"type": "hello"})

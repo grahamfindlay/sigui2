@@ -19,15 +19,22 @@ function Btn(
 }
 
 export function UnitListView() {
-  const { meta, curation, curate, visibleUnits, setVisibleUnits } = useSigui();
+  const { meta, curation, curate, visibleUnits, setVisibleUnits,
+    selection, clearSelection } = useSigui();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const sel = useMemo(() => [...selected], [selected]);
 
   const inMerge = (u: string) => curation.merges.some((g) => g.map(String).includes(u));
   const selectedInMerge = sel.some(inMerge);
   const selectedRemoved = sel.some((u) => curation.removed.map(String).includes(u));
+  const splitSet = new Set(curation.splits.map(String));
+  const selectedSplit = sel.some((u) => splitSet.has(u));
+  const regionN = selection?.n ?? 0;
 
   const act = (msg: object) => curate({ ...msg, unit_ids: sel });
+  // Split uses the server-side region selection (lasso on the scatter), not the
+  // row selection: it splits every unit the lassoed spikes belong to.
+  const doSplit = () => { curate({ type: "split_units" }); clearSelection(); };
 
   return (
     <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", background: "#161616" }}>
@@ -45,6 +52,14 @@ export function UnitListView() {
           title="mark selected as removed">delete</Btn>
         <Btn onClick={() => act({ type: "restore_units" })} disabled={!selectedRemoved}
           title="restore selected removed units">restore</Btn>
+        <Btn onClick={doSplit} disabled={regionN < 1}
+          title={regionN >= 1
+            ? `split ${regionN} lassoed spike(s) off their unit(s)`
+            : "lasso spikes on the amplitude scatter first"}>
+          split{regionN ? ` (${regionN})` : ""}
+        </Btn>
+        <Btn onClick={() => act({ type: "unsplit_units" })} disabled={!selectedSplit}
+          title="undo the split on selected units">unsplit</Btn>
         {Object.entries(curation.label_definitions).map(([cat, def]) => (
           <select key={cat} value="" disabled={selected.size < 1}
             title={`label selected: ${cat}`}

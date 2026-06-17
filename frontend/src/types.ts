@@ -26,6 +26,14 @@ export interface LabelDefinition {
   exclusive: boolean;
 }
 
+// Current spike selection summary (from a scatter lasso / region query). The
+// server keeps the authoritative spike-index set; the client only needs counts
+// to drive the UI (split target + readout) and highlights its own points locally.
+export interface Selection {
+  n: number;
+  per_unit: Record<string, number>; // unit id -> selected-spike count
+}
+
 // Manual-curation overlay (annotations; does not change unit_ids).
 export interface CurationState {
   label_definitions: Record<string, LabelDefinition>;
