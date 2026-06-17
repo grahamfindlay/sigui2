@@ -137,3 +137,24 @@ would be a frozen snapshot — don't use them for live state.
   synchronously on mount would race dockview's layout pass.)
 - Theme: import `dockview/dist/styles/dockview.css` (vite extracts it to a dist
   CSS file) and set `className="dockview-theme-abyss"` on `<DockviewReact>`.
+
+## TanStack virtualized table (unit list)
+
+The unit list (`UnitTable.tsx`) uses `@tanstack/react-table` for sort state +
+sorted row model and `@tanstack/react-virtual` for row virtualization (scales to
+100-500 units).
+
+- **Layout via a shared CSS grid template**, not a `<table>`: the sticky header
+  row and every body row use the same `gridTemplateColumns` string so columns
+  line up. Header is `position: sticky; top: 0`; the body is a `position:
+  relative` box of height `getTotalSize()` with each virtual row
+  `position: absolute; transform: translateY(virtualItem.start)`.
+- **Null metrics**: accessor returns `value ?? undefined` (not `null`) and the
+  column sets `sortUndefined: "last"`, so missing metrics sort to the bottom; the
+  cell still renders from `row.original` (displays "–").
+- **Numeric id sort**: ids like `"0".."19"` would sort lexically ("10" < "2");
+  the `unit` accessor coerces to `Number(id)` when finite.
+- Server side: `metric_columns` + `unit_metrics` come from
+  `Controller.get_units_table()` (spikeinterface `make_units_table_from_analyzer`),
+  always augmented with `num_spikes`/`firing_rate` so the table is useful even on
+  analyzers without a quality-metrics extension (the synthetic one only has x/y).
