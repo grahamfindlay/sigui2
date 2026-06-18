@@ -17,6 +17,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from . import protocol
 from .schema import (
+    ClearSelection,
     ControlMessage,
     CorrelogramRequest,
     DeleteUnits,
@@ -47,7 +48,41 @@ FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 _control_adapter: TypeAdapter = TypeAdapter(ControlMessage)
 
 
-async def _dispatch(ws: WebSocket, session: Session, msg) -> None:
+class ClientHub:
+    """Tracks every connected window so shared-session state can be fanned out.
+
+    sigui2 runs one ``Session`` (one Controller) per process, so all browser
+    windows are views onto the *same* visibility / curation / selection. When one
+    window mutates that shared state we broadcast the new state to the others so
+    every monitor stays in sync. Single uvicorn worker -> one process -> this
+    in-process set sees all clients.
+    """
+
+    def __init__(self) -> None:
+        self._clients: set[WebSocket] = set()
+
+    def add(self, ws: WebSocket) -> None:
+        self._clients.add(ws)
+
+    def remove(self, ws: WebSocket) -> None:
+        self._clients.discard(ws)
+
+    async def broadcast(self, payload: dict, exclude: WebSocket | None = None) -> None:
+        """Send ``payload`` (JSON) to every client except ``exclude``; drop any
+        socket that fails (already-closed windows)."""
+        dead = []
+        for ws in list(self._clients):
+            if ws is exclude:
+                continue
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self._clients.discard(ws)
+
+
+async def _dispatch(ws: WebSocket, session: Session, hub: ClientHub, msg) -> None:
     ctrl = session.controller
 
     if isinstance(msg, Hello):
@@ -56,10 +91,13 @@ async def _dispatch(ws: WebSocket, session: Session, msg) -> None:
     elif isinstance(msg, SetVisibleUnits):
         ctrl.set_visible_unit_ids(msg.unit_ids)
         ctrl.update_visible_spikes()
-        await ws.send_json({
-            "type": "ack", "of": "set_visible_units",
-            "visible": list(ctrl.get_visible_unit_ids()),
-        })
+        vis = [protocol._uid(u) for u in ctrl.get_visible_unit_ids()]
+        # Broadcast the AUTHORITATIVE visibility to EVERY window (incl. the
+        # sender). The Controller may adjust the requested set -- e.g. it caps the
+        # number of simultaneously visible units -- so the sender must reconcile
+        # its optimistic state too, or windows would disagree. The client
+        # echo-guard keeps this single round-trip from looping.
+        await hub.broadcast({"type": "visible_units", "unit_ids": vis})
 
     elif isinstance(msg, TraceViewport):
         frame = await anyio.to_thread.run_sync(
@@ -77,16 +115,32 @@ async def _dispatch(ws: WebSocket, session: Session, msg) -> None:
 
     elif isinstance(msg, SelectSpikes):
         ctrl.set_indices_spike_selected(msg.indices)
-        await ws.send_json({
-            "type": "ack", "of": "select_spikes",
-            "n": len(ctrl.get_indices_spike_selected()),
-        })
+        # Shared session: broadcast the pick so every window draws the same
+        # highlight at the spikes' world coords (the client sends the points).
+        state = protocol.build_selection_state(session)
+        state["kind"] = "spikes"
+        state["points"] = msg.points
+        state["indices"] = msg.indices  # so every window's readout shows the spike #
+        await hub.broadcast(state)
 
     elif isinstance(msg, SelectRegion):
         state = await anyio.to_thread.run_sync(
             protocol.select_region, session, msg.view, msg.polygon, msg.unit_ids,
         )
-        await ws.send_json(state)
+        # Shared session: include the world-space polygon so every window can
+        # reproduce the exact same highlight + outline (zoom-independent).
+        state["kind"] = "region"
+        state["polygon"] = msg.polygon
+        await hub.broadcast(state)
+
+    elif isinstance(msg, ClearSelection):
+        ctrl.set_indices_spike_selected([])
+        # Clear is shared too: wipe the one Controller selection (so a later
+        # split can't act on stale spikes) and tell every window to drop its
+        # highlight.
+        state = protocol.build_selection_state(session)  # n == 0
+        state["kind"] = "clear"
+        await hub.broadcast(state)
 
     elif isinstance(msg, TracemapRequest):
         frame = await anyio.to_thread.run_sync(
@@ -136,9 +190,9 @@ async def _dispatch(ws: WebSocket, session: Session, msg) -> None:
     elif isinstance(msg, (MergeUnits, UnmergeUnits, DeleteUnits, RestoreUnits,
                           LabelUnits, SplitUnits, UnsplitUnits, SaveCuration)):
         _apply_curation(session, msg)
-        # Mutations are cheap (list ops); echo the full curation state so the
-        # client re-syncs regardless of whether the action was a no-op.
-        await ws.send_json(protocol.build_curation_state(session))
+        # Mutations are cheap (list ops); broadcast the full curation state so
+        # EVERY window re-syncs regardless of whether the action was a no-op.
+        await hub.broadcast(protocol.build_curation_state(session))
 
 
 def _unmerge(ctrl, unit_ids: list) -> None:
@@ -238,6 +292,7 @@ def _apply_curation(session: Session, msg) -> None:
 
 def create_app(session: Session) -> FastAPI:
     app = FastAPI(title="sigui2", version="0.0.1")
+    hub = ClientHub()
 
     @app.get("/api/meta")
     async def meta():
@@ -246,6 +301,7 @@ def create_app(session: Session) -> FastAPI:
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket):
         await ws.accept()
+        hub.add(ws)
         try:
             while True:
                 raw = await ws.receive_json()
@@ -254,9 +310,11 @@ def create_app(session: Session) -> FastAPI:
                 except ValidationError as e:
                     await ws.send_json({"type": "error", "msg": str(e)})
                     continue
-                await _dispatch(ws, session, msg)
+                await _dispatch(ws, session, hub, msg)
         except WebSocketDisconnect:
             pass
+        finally:
+            hub.remove(ws)
 
     # Mount static LAST so /api/* and /ws take precedence over the SPA catch-all.
     if FRONTEND_DIST.is_dir():

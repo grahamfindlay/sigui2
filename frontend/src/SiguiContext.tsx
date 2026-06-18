@@ -15,12 +15,18 @@ export interface SiguiCtx {
   curate: (msg: unknown) => void; // send a curation control message
   // Current scatter region selection (drives the split action + readout).
   selection: Selection | null;
-  clearSelection: () => void; // drop the selection everywhere (also clears the lasso)
+  clearSelection: () => void; // drop the selection everywhere (server + all windows)
   selectionNonce: number; // bumps on clearSelection so the scatter wipes its highlight
   // Individually picked spikes (single click or spikelist row): world coords for
   // the scatter pick-highlight + the action that selects them on the server.
   pickedPoints: [number, number][];
   pickSpikes: (indices: number[], points: [number, number][]) => void;
+  // Global indices of the picked spikes (parallel to pickedPoints), shared so
+  // every window's "picked spike #N" readout matches the highlight it shows.
+  pickedIndices: number[];
+  // Shared lasso polygon (world coords) broadcast from whichever window drew it,
+  // so every window redraws the same outline + white highlight. null = no lasso.
+  lassoPolygon: [number, number][] | null;
 }
 
 export const SiguiContext = createContext<SiguiCtx | null>(null);

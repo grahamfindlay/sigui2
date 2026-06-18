@@ -39,6 +39,13 @@ class ScatterRequest(BaseModel):
 class SelectSpikes(BaseModel):
     type: Literal["select_spikes"]
     indices: list[int] = Field(default_factory=list)
+    # World coords ([x=time_s, y=amplitude], ...) of the picked spikes, so the
+    # selection broadcast can reproduce the highlight in every window.
+    points: list[list[float]] = Field(default_factory=list)
+
+
+class ClearSelection(BaseModel):
+    type: Literal["clear_selection"]
 
 
 class SelectRegion(BaseModel):
@@ -149,8 +156,8 @@ class SaveCuration(BaseModel):
 ControlMessage = Annotated[
     Union[
         Hello, SetVisibleUnits, TraceViewport, ScatterRequest, SelectSpikes,
-        SelectRegion, TracemapRequest, SpikelistRequest, DensityRequest, HeatmapRequest,
-        CorrelogramRequest, IsiRequest, WaveformRequest,
+        SelectRegion, ClearSelection, TracemapRequest, SpikelistRequest, DensityRequest,
+        HeatmapRequest, CorrelogramRequest, IsiRequest, WaveformRequest,
         MergeUnits, UnmergeUnits, DeleteUnits, RestoreUnits, LabelUnits,
         SplitUnits, UnsplitUnits, SaveCuration,
     ],

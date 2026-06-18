@@ -42,15 +42,14 @@ export function ScatterPane(
   const visRef = useRef<UnitId[]>(visibleUnits);
   visRef.current = visibleUnits;
   const [fps, setFps] = useState(0);
-  const [pick, setPick] = useState<number | null>(null);
   const [lasso, setLasso] = useState(false);
   const [localSel, setLocalSel] = useState(0);
-  const { selection, selectionNonce, clearSelection, pickedPoints, pickSpikes } = useSigui();
+  const { selection, selectionNonce, clearSelection, pickedPoints, pickedIndices, pickSpikes, lassoPolygon } = useSigui();
 
   useEffect(() => {
     const view = new ScatterView(canvasRef.current!, overlayRef.current!, {
       onFps: setFps,
-      onPick: (gi, point) => { setPick(gi); pickSpikes([gi], [point]); },
+      onPick: (gi, point) => pickSpikes([gi], [point]),
       onLassoLocal: setLocalSel,
       // Hand the world-space polygon to the server for the EXACT selection
       // (the rendered points are only a decimated sample). visRef keeps the
@@ -62,7 +61,7 @@ export function ScatterPane(
     viewRef.current = view;
     if (stress > 0) {
       view.stress(stress);
-      return;
+      return () => view.dispose();
     }
     // Assemble the visible units' cached slices into one contiguous buffer set
     // (a local memcpy, no network) and render.
@@ -88,6 +87,7 @@ export function ScatterPane(
         view.render(position, color, spikeIndex);
       },
     );
+    return () => { view.dispose(); viewRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -110,6 +110,13 @@ export function ScatterPane(
     viewRef.current?.highlightPoints(pickedPoints);
   }, [pickedPoints]);
 
+  // Shared lasso (this window's own or another window's): redraw the outline +
+  // white highlight from the broadcast world-space polygon. Runs on mount too,
+  // so re-showing the scatter tab restores the current shared selection.
+  useEffect(() => {
+    viewRef.current?.showLasso(lassoPolygon);
+  }, [lassoPolygon]);
+
   const toggleLasso = () => {
     const next = !lasso;
     setLasso(next);
@@ -124,9 +131,11 @@ export function ScatterPane(
   const label =
     stress > 0
       ? `STRESS: ${stress.toLocaleString()} points (synthetic)`
-      : pick != null
-        ? `amplitude scatter · picked spike #${pick}`
-        : `amplitude scatter · ${visibleUnits.length} units`;
+      : pickedIndices.length === 1
+        ? `amplitude scatter · picked spike #${pickedIndices[0]}`
+        : pickedIndices.length > 1
+          ? `amplitude scatter · ${pickedIndices.length} spikes picked`
+          : `amplitude scatter · ${visibleUnits.length} units`;
 
   const hasSel = selection != null && selection.n > 0;
 

@@ -109,8 +109,8 @@ def test_scatter_frame_and_select(client):
         meta = ws.receive_json()
         units = meta["unit_ids"][:4]
         ws.send_json({"type": "set_visible_units", "unit_ids": units})
-        ack = ws.receive_json()
-        assert ack["type"] == "ack"
+        vis = ws.receive_json()
+        assert vis["type"] == "visible_units"  # authoritative visibility echo
 
         ws.send_json({"type": "scatter_request", "view": "amplitude", "unit_ids": units})
         header, bufs = decode_frame(ws.receive_bytes())
@@ -121,11 +121,13 @@ def test_scatter_frame_and_select(client):
         assert bufs["spike_index"].shape == (n,)
         assert set(int(u) for u in units) <= set(int(k) for k in header["ranges"])
 
-        # pick the first point -> its global spike index -> select round-trip
+        # pick the first point -> its global spike index -> selection broadcast
         picked = int(bufs["spike_index"][0])
-        ws.send_json({"type": "select_spikes", "indices": [picked]})
-        ack = ws.receive_json()
-        assert ack["type"] == "ack" and ack["n"] == 1
+        ws.send_json({"type": "select_spikes", "indices": [picked],
+                      "points": [[1.0, 2.0]]})
+        sel = ws.receive_json()
+        assert sel["type"] == "selection" and sel["kind"] == "spikes" and sel["n"] == 1
+        assert sel["points"] == [[1.0, 2.0]] and sel["indices"] == [picked]
 
 
 def _range(ranges: dict, unit):
@@ -187,7 +189,7 @@ def test_select_region_exact_and_split(client):
         nspk = meta["unit_metrics"][str(u3)]["num_spikes"]
 
         ws.send_json({"type": "set_visible_units", "unit_ids": [u3]})
-        assert ws.receive_json()["type"] == "ack"
+        assert ws.receive_json()["type"] == "visible_units"
 
         # A rectangle enclosing the whole plane selects EVERY spike of u3.
         big = _rect(-1.0, dur + 1.0, -1e9, 1e9)
@@ -195,6 +197,7 @@ def test_select_region_exact_and_split(client):
                       "polygon": big, "unit_ids": [u3]})
         s = ws.receive_json()
         assert s["type"] == "selection"
+        assert s["kind"] == "region" and s["polygon"] == big  # echoed for redraw
         assert s["n"] == nspk                       # exact, > the working-set sample
         assert s["per_unit"][str(u3)] == nspk
 
@@ -257,7 +260,7 @@ def test_spikelist_window(client):
         meta = ws.receive_json()
         units = meta["unit_ids"][:3]
         ws.send_json({"type": "set_visible_units", "unit_ids": units})
-        assert ws.receive_json()["type"] == "ack"
+        assert ws.receive_json()["type"] == "visible_units"
 
         ws.send_json({"type": "spikelist_request", "offset": 0, "limit": 50})
         r = ws.receive_json()
@@ -272,7 +275,7 @@ def test_spikelist_window(client):
 
         # Selecting a spike marks exactly that row in the next window.
         ws.send_json({"type": "select_spikes", "indices": [row0["i"]]})
-        assert ws.receive_json()["type"] == "ack"
+        assert ws.receive_json()["type"] == "selection"
         ws.send_json({"type": "spikelist_request", "offset": 0, "limit": 50})
         r2 = ws.receive_json()
         sel_rows = [row for row in r2["rows"] if row["selected"]]
@@ -285,7 +288,7 @@ def test_density_frame(client):
         meta = ws.receive_json()
         units = meta["unit_ids"][:4]
         ws.send_json({"type": "set_visible_units", "unit_ids": units})
-        assert ws.receive_json()["type"] == "ack"
+        assert ws.receive_json()["type"] == "visible_units"
 
         # No bounds -> server bins the full data range and reports it back.
         ws.send_json({"type": "density_request", "view": "amplitude",
@@ -392,3 +395,137 @@ def test_isi_and_correlogram_frames(client):
             assert n_units == len(units)
             assert bufs["counts"].shape == (n_units, n_bins)
             assert bufs["bins"].size >= n_bins  # edges (n_bins+1) or centers
+
+
+# --- multi-window shared session (broadcast) --------------------------------
+
+def _fresh_client(num_units=6, num_channels=16, duration_s=10.0):
+    """A throwaway app/Session, so visibility/curation mutations here don't leak
+    into the module-scoped `client` fixture other tests share."""
+    from starlette.testclient import TestClient
+
+    from sigui2.testing import make_synthetic_analyzer
+
+    analyzer = make_synthetic_analyzer(
+        num_units=num_units, num_channels=num_channels,
+        duration_s=duration_s, firing_rate=12.0,
+    )
+    return TestClient(create_app(Session(analyzer)))
+
+
+def test_metadata_reports_seeded_visibility():
+    """Session seeds visibility to the first <=8 units and build_metadata reports
+    that live set (not a static default), so every connecting window adopts it."""
+    client = _fresh_client(num_units=12)
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "hello"})
+        meta = ws.receive_json()
+    assert len(meta["default_visible_units"]) == 8  # min(8, 12)
+    assert {str(u) for u in meta["default_visible_units"]} == \
+        {str(u) for u in meta["unit_ids"][:8]}
+
+
+def test_clienthub_broadcast_and_prune():
+    """broadcast() fans out to every client, honors exclude, and drops a socket
+    whose send raises (a window that closed)."""
+    import asyncio
+
+    from sigui2.server.app import ClientHub
+
+    got: dict = {"a": [], "b": []}
+
+    class FakeWS:
+        def __init__(self, name, fail=False):
+            self.name, self.fail = name, fail
+
+        async def send_json(self, payload):
+            if self.fail:
+                raise RuntimeError("socket closed")
+            got[self.name].append(payload)
+
+    hub = ClientHub()
+    a, b = FakeWS("a"), FakeWS("b", fail=True)
+    hub.add(a)
+    hub.add(b)
+
+    asyncio.run(hub.broadcast({"type": "x"}))
+    assert got["a"] == [{"type": "x"}]      # healthy socket received it
+    assert b not in hub._clients            # raiser was pruned
+    assert a in hub._clients                # healthy one stays
+
+    asyncio.run(hub.broadcast({"type": "y"}, exclude=a))
+    assert got["a"] == [{"type": "x"}]      # excluded -> no second message
+
+
+def test_multiwindow_visibility_and_curation_broadcast():
+    """Two windows on one session: a visibility change in one is pushed to the
+    other (excluding the sender), and a curation mutation reaches both."""
+    client = _fresh_client(num_units=6)
+    with client.websocket_connect("/ws") as ws1, client.websocket_connect("/ws") as ws2:
+        ws1.send_json({"type": "hello"})
+        meta = ws1.receive_json()
+        ws2.send_json({"type": "hello"})
+        ws2.receive_json()
+        units = meta["unit_ids"][:3]
+
+        # Visibility change in ws1 is broadcast to BOTH windows: the sender
+        # reconciles its own state, the other window adopts it.
+        ws1.send_json({"type": "set_visible_units", "unit_ids": units})
+        conf1, push2 = ws1.receive_json(), ws2.receive_json()
+        assert conf1["type"] == "visible_units" and push2["type"] == "visible_units"
+        want = {str(u) for u in units}
+        assert {str(u) for u in conf1["unit_ids"]} == want
+        assert {str(u) for u in push2["unit_ids"]} == want
+
+        # Curation in ws1 is broadcast to BOTH windows (shared curation state).
+        u0, u1 = meta["unit_ids"][0], meta["unit_ids"][1]
+        ws1.send_json({"type": "merge_units", "unit_ids": [u0, u1]})
+        c1, c2 = ws1.receive_json(), ws2.receive_json()
+        assert c1["type"] == "curation" and c2["type"] == "curation"
+        assert any({str(u0), str(u1)} == set(map(str, g)) for g in c2["merges"])
+
+
+def test_visible_cap_reconciles_actor_and_others():
+    """The Controller caps the number of simultaneously-visible units. The
+    *clamped* set is what gets broadcast, so the requesting window reconciles to
+    it too -- the actor and the other windows never disagree."""
+    client = _fresh_client(num_units=20)
+    with client.websocket_connect("/ws") as ws1, client.websocket_connect("/ws") as ws2:
+        ws1.send_json({"type": "hello"})
+        meta = ws1.receive_json()
+        ws2.send_json({"type": "hello"})
+        ws2.receive_json()
+
+        # Request ALL 20 units visible; the Controller clamps the count.
+        ws1.send_json({"type": "set_visible_units", "unit_ids": meta["unit_ids"]})
+        v1, v2 = ws1.receive_json(), ws2.receive_json()
+        assert v1["type"] == "visible_units" and v2["type"] == "visible_units"
+        assert 0 < len(v1["unit_ids"]) < 20          # actually clamped
+        assert {str(u) for u in v1["unit_ids"]} == {str(u) for u in v2["unit_ids"]}
+
+
+def test_selection_broadcast_region_and_clear():
+    """A lasso in one window broadcasts the polygon + summary to BOTH windows, so
+    the other can redraw the exact highlight; a clear (from either window) resets
+    the shared Controller selection and is broadcast to both."""
+    client = _fresh_client(num_units=6)
+    with client.websocket_connect("/ws") as ws1, client.websocket_connect("/ws") as ws2:
+        ws1.send_json({"type": "hello"})
+        meta = ws1.receive_json()
+        ws2.send_json({"type": "hello"})
+        ws2.receive_json()
+        u = meta["unit_ids"][0]
+        big = _rect(-1.0, meta["duration_s"] + 1.0, -1e9, 1e9)
+
+        # Lasso in ws1 -> both windows get the region (polygon + count).
+        ws1.send_json({"type": "select_region", "view": "amplitude",
+                       "polygon": big, "unit_ids": [u]})
+        s1, s2 = ws1.receive_json(), ws2.receive_json()
+        assert s1["type"] == "selection" and s2["type"] == "selection"
+        assert s2["kind"] == "region" and s2["polygon"] == big and s2["n"] > 0
+
+        # Clear from the OTHER window resets the shared selection in both.
+        ws2.send_json({"type": "clear_selection"})
+        c1, c2 = ws1.receive_json(), ws2.receive_json()
+        assert c1["kind"] == "clear" and c1["n"] == 0
+        assert c2["kind"] == "clear" and c2["n"] == 0

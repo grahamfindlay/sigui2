@@ -23,6 +23,7 @@ export class DensityView {
   private fitted = false;
   private lastBounds: Bounds | null = null;
   private onCount?: (n: number) => void;
+  private disposed = false;
 
   constructor(canvas: HTMLCanvasElement, sock: Sock, onCount?: (n: number) => void) {
     this.sock = sock;
@@ -39,6 +40,13 @@ export class DensityView {
         return viewState;
       },
     } as any);
+  }
+
+  // Release the GL context. Idempotent; called when the dockview tab is hidden.
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.deck.finalize();
   }
 
   private w() { return Math.max(64, this.canvas.clientWidth || 800); }
@@ -83,6 +91,7 @@ export class DensityView {
   }
 
   private draw(frame: DecodedFrame) {
+    if (this.disposed) return; // a frame can land after the tab was hidden
     const { header, buffers } = frame;
     const W = header.width as number, H = header.height as number;
     if (!W || !H) { this.deck.setProps({ layers: [] }); return; }

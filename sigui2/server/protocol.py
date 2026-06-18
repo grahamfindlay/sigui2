@@ -156,7 +156,9 @@ def build_metadata(session: Session) -> dict:
         "num_samples": int(n_samples),
         "unit_ids": unit_ids,
         "unit_colors": colors,
-        "default_visible_units": [unit_ids[0]] if unit_ids else [],
+        # The live shared-session visibility (not a static default), so every
+        # window -- including late joiners -- adopts the same set on connect.
+        "default_visible_units": [_uid(u) for u in ctrl.get_visible_unit_ids()],
         "has_spike_amplitudes": session.spike_amplitudes() is not None,
         "metric_columns": units["columns"],
         "unit_metrics": units["rows"],

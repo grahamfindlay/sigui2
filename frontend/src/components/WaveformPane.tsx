@@ -59,6 +59,7 @@ export function WaveformPane(
         });
       },
     );
+    return () => { view.dispose(); viewRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

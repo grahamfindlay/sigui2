@@ -18,6 +18,7 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage({ viewport: { width: 1680, height: 1000 } });
 const logs = [];
+let extra = {};
 page.on("console", (m) => logs.push(`[${m.type()}] ${m.text()}`));
 page.on("pageerror", (e) => logs.push(`[pageerror] ${e.message}`));
 
@@ -44,11 +45,39 @@ if (action === "lasso") {
   await page.waitForTimeout(800);
 }
 
+if (action === "tabcycle") {
+  // Feature 1 check: repeatedly show/hide deck panels. dockview unmounts a hidden
+  // tab (onlyWhenVisible default), so each switch must dispose() the outgoing
+  // view's WebGL context. Without disposal the contexts pile up to the browser's
+  // ~16 cap and Chrome logs "Too many active WebGL contexts. Oldest will be
+  // lost." So the pass condition is: zero such warnings across many switches.
+  const counts = [];
+  const clickTab = async (name) => {
+    await page.getByText(name, { exact: true }).first().click().catch(() => {});
+    await page.waitForTimeout(400);
+    counts.push(await page.evaluate(() => document.querySelectorAll("canvas").length));
+  };
+  for (let i = 0; i < 10; i++) {
+    await clickTab("density"); await clickTab("amplitude"); // scatter group
+    await clickTab("tracemap"); await clickTab("traces");   // trace group
+  }
+  const ctxWarn = logs.filter((l) => /too many active webgl|context will be lost|context lost/i.test(l));
+  extra = {
+    tabcycle: {
+      switches: counts.length,
+      canvasCount: { min: Math.min(...counts), max: Math.max(...counts) },
+      webglContextWarnings: ctxWarn.length,
+      sample: ctxWarn.slice(0, 3),
+      pass: ctxWarn.length === 0,
+    },
+  };
+}
+
 const info = await page.evaluate(() => ({
   gpu: document.body.innerText.match(/GPU:\s*([^\n·]+)/)?.[1]?.trim() ?? "n/a",
   canvases: document.querySelectorAll("canvas").length,
   headline: document.body.innerText.split("\n").slice(0, 3).join(" | "),
 }));
 await page.screenshot({ path: out });
-console.log(JSON.stringify({ ...info, recentLogs: logs.slice(-15) }, null, 2));
+console.log(JSON.stringify({ ...info, ...extra, recentLogs: logs.slice(-15) }, null, 2));
 await browser.close();

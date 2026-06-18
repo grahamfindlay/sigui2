@@ -18,6 +18,7 @@ export function HeatmapPane({ sock }: { sock: Sock }) {
           f.header.vmax as number,
         ),
       );
+    return () => view.dispose();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

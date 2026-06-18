@@ -49,6 +49,16 @@ export interface Selection {
   per_unit: Record<string, number>; // unit id -> selected-spike count
 }
 
+// A selection broadcast from the server (shared session). Carries the summary
+// plus enough for every window to redraw the visual: the lasso polygon (region)
+// or the picked spikes' world coords (spikes). kind "clear" wipes it.
+export interface SelectionMsg extends Selection {
+  kind?: "region" | "spikes" | "clear";
+  polygon?: [number, number][];
+  points?: [number, number][];
+  indices?: number[]; // global spike indices of a pick (drives the "#N" readout)
+}
+
 // Manual-curation overlay (annotations; does not change unit_ids).
 export interface CurationState {
   label_definitions: Record<string, LabelDefinition>;

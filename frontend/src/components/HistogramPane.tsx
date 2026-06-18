@@ -58,6 +58,7 @@ export function HistogramPane(
         view.render(bins, counts, visible.length, nBins, colors);
       },
     );
+    return () => view.dispose();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

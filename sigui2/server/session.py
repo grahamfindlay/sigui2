@@ -53,6 +53,14 @@ class Session:
         # target (Controller's "web" branch leaves signal_handler unset).
         self.controller.signal_handler = WebSignalHandler(self.controller)
 
+        # Seed a deterministic initial visibility (first <=8 units). The shared
+        # session reports this live set in build_metadata, so every window --
+        # including ones opened later on a second monitor -- adopts the SAME set
+        # instead of each clobbering it with its own default.
+        ids = list(self.controller.unit_ids)
+        self.controller.set_visible_unit_ids(ids[: min(8, len(ids))])
+        self.controller.update_visible_spikes()
+
     # --- convenience accessors used by the LOD layer / views -----------------
 
     @property

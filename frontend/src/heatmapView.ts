@@ -7,6 +7,7 @@ import { viridis } from "./colormap";
 export class HeatmapView {
   private deck: Deck;
   private canvas: HTMLCanvasElement;
+  private disposed = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -19,7 +20,15 @@ export class HeatmapView {
     } as any);
   }
 
+  // Release the GL context. Idempotent; called when the dockview tab is hidden.
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.deck.finalize();
+  }
+
   render(matrix: Float32Array, n: number, vmin: number, vmax: number) {
+    if (this.disposed) return; // the similarity frame can land after tab hidden
     if (n === 0) { this.deck.setProps({ layers: [] }); return; }
     const rgba = new Uint8ClampedArray(n * n * 4);
     const span = Math.max(1e-9, vmax - vmin);

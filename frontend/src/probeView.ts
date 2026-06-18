@@ -28,6 +28,7 @@ export class ProbeView {
   private geom: ProbeGeometry;
   private fitted = false;
   private version = 0;
+  private disposed = false;
 
   constructor(canvas: HTMLCanvasElement, geom: ProbeGeometry) {
     this.canvas = canvas;
@@ -39,6 +40,13 @@ export class ProbeView {
       controller: true,
       useDevicePixels: true,
     } as any);
+  }
+
+  // Release the GL context. Idempotent; called when the dockview tab is hidden.
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.deck.finalize();
   }
 
   private fit() {
@@ -60,6 +68,7 @@ export class ProbeView {
   }
 
   render(visible: Set<string>) {
+    if (this.disposed) return;
     this.version++;
     const layers: any[] = [];
 

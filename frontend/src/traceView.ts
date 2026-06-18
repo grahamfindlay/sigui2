@@ -19,6 +19,9 @@ export class TraceView {
   private canvas: HTMLCanvasElement;
   private ampGain = 1;
   private lastFrame: DecodedFrame | null = null;
+  private fpsTimer?: ReturnType<typeof setInterval>;
+  private detachGain: () => void;
+  private disposed = false;
 
   constructor(
     canvas: HTMLCanvasElement, sock: Sock,
@@ -28,7 +31,7 @@ export class TraceView {
     this.canvas = canvas;
     this.onFps = onFps;
     this.onGain = onGain;
-    attachGainKeys(canvas, (f) => this.bumpGain(f));
+    this.detachGain = attachGainKeys(canvas, (f) => this.bumpGain(f));
     this.deck = new Deck({
       canvas,
       views: [new OrthographicView({ id: "t" })],
@@ -40,10 +43,20 @@ export class TraceView {
         return viewState;
       },
     } as any);
-    setInterval(() => {
+    this.fpsTimer = setInterval(() => {
       const fps = (this.deck as any).metrics?.fps;
       if (fps) this.onFps?.(fps);
     }, 500);
+  }
+
+  // Release the GL context + FPS timer + the window keydown listener attached by
+  // attachGainKeys. Idempotent; called when the dockview tab is hidden.
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    clearInterval(this.fpsTimer);
+    this.detachGain();
+    this.deck.finalize();
   }
 
   // Use the canvas's CSS size (available immediately) rather than deck.width,
@@ -87,6 +100,7 @@ export class TraceView {
   }
 
   private draw(frame: DecodedFrame) {
+    if (this.disposed) return; // a frame can land after the tab was hidden
     this.lastFrame = frame;
     const { header, buffers } = frame;
     const n = header.n_points as number;

@@ -20,8 +20,10 @@ export function ProbePane(
   }, [meta]);
 
   useEffect(() => {
-    viewRef.current = new ProbeView(canvasRef.current!, geom);
-    viewRef.current.render(new Set(visibleUnits.map(String)));
+    const view = new ProbeView(canvasRef.current!, geom);
+    viewRef.current = view;
+    view.render(new Set(visibleUnits.map(String)));
+    return () => { view.dispose(); viewRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

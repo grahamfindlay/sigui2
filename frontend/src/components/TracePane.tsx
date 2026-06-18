@@ -15,6 +15,7 @@ export function TracePane({ sock, meta }: { sock: Sock; meta: Meta }) {
     const view = new TraceView(canvasRef.current!, sock, setFps, setGain);
     viewRef.current = view;
     view.init(meta.duration_s);
+    return () => { view.dispose(); viewRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

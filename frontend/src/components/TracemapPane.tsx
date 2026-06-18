@@ -14,6 +14,7 @@ export function TracemapPane({ sock, meta }: { sock: Sock; meta: Meta }) {
     const view = new TracemapView(canvasRef.current!, sock, setGain);
     viewRef.current = view;
     view.init(meta.duration_s);
+    return () => { view.dispose(); viewRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

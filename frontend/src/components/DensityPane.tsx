@@ -17,6 +17,7 @@ export function DensityPane(
     const view = new DensityView(canvasRef.current!, sock, setCount);
     viewRef.current = view;
     view.init(visibleUnits);
+    return () => { view.dispose(); viewRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

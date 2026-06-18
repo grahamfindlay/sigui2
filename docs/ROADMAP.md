@@ -23,8 +23,24 @@ Status legend: ✅ shipped · 🚧 in progress · 🔭 planned/idea · ⏸ parke
   map, spikelist (windowed), unit-list table (TanStack, virtualized).
 - **Curation**: merge / unmerge / delete / restore / label / split / unsplit /
   save (annotation model; never mutates unit_ids).
-- **Selection**: spike-level lasso → exact server-side region query → split;
-  shared coordinate-based pick-highlight (single click + spikelist row).
+- **Selection (shared across windows)**: spike-level lasso → exact server-side
+  region query → split; coordinate-based pick-highlight (single click + spikelist
+  row). The selection is one shared Controller state, broadcast to all windows
+  with enough to redraw it (lasso polygon; pick points + spike index), so every
+  window shows the same highlight, outline, and "#N" readout. Clear resets the
+  shared selection everywhere (also fixes a single-window clear→split staleness).
+- **Multi-window (multi-monitor) shared session**: open the same URL in a 2nd
+  browser window on another monitor; an in-process client registry broadcasts
+  shared state (visibility, curation, selection) to every window so they stay in
+  sync. One Controller = one session; a late-joining window adopts the live
+  visibility (order-insensitive echo guard prevents ping-pong). NOTE: the
+  Controller caps simultaneously-visible units (~10) — the *clamped* set is
+  broadcast, so the acting window reconciles too (no actor/observer divergence).
+- **Free a hidden tab's WebGL context**: dockview already unmounts a hidden tab
+  (`onlyWhenVisible` default); views now `dispose()` (`deck.finalize()` + clear
+  FPS timers / stress rAF / gain-key + lasso listeners) on unmount, so switching
+  tabs no longer leaks contexts toward the browser's ~16 cap. Cost: a hidden→shown
+  tab re-inits (re-fetch + re-fit).
 - **Amplitude/contrast gain** on trace/tracemap/waveform; hover +/- keys + corner
   control.
 - **Self-driven UX harness** (`frontend/uxtest/snap.mjs`): drives the running app
@@ -33,27 +49,23 @@ Status legend: ✅ shipped · 🚧 in progress · 🔭 planned/idea · ⏸ parke
   `page.evaluate` introspection. Lets UI changes be verified headlessly without a
   human. WebGL runs on SwiftShader (software): visuals faithful, **fps not
   meaningful**; real-GPU perf + true multi-monitor still need a human for final
-  sign-off. Multi-window/popup is scriptable, so independent-windows + broadcast
-  can be tested headlessly too.
+  sign-off. Companion scripts cover the multi-window features headlessly:
+  `multiwin.mjs` (visibility broadcast + clamp reconcile), `selsync.mjs` (shared
+  lasso highlight/outline + cross-window clear), `picksync.mjs` (shared pick
+  readout), and `snap.mjs tabcycle` (no WebGL-context leak across tab switches).
 
 ## Next up 🚧
 
-- **Free a panel's deck context when its dockview tab is hidden** — `renderer:
-  'onlyWhenVisible'` on deck panels + `dispose()` on view unmount, so inactive
-  tabs don't hold a live WebGL context (browsers cap ~16). Cost: a hidden→shown
-  tab re-inits (re-fetch + re-fit).
-- **Multi-monitor via independent windows + broadcast** — open a 2nd full browser
-  window (native deck.gl canvases, all interactions work) on another monitor; the
-  server broadcasts shared state (visibility, curation, selection) to all
-  connected windows so they stay in sync. One coherent session across monitors.
-  (This is the chosen multi-monitor path — see Parked: popout. Now testable
-  headlessly via the UX harness.)
+- **State preservation across tab hide/show** — remember view-state (pan/zoom,
+  gain) + last data so re-showing an `onlyWhenVisible` tab doesn't re-fetch /
+  re-fit. The natural follow-on to the context-freeing work.
+- **Independent per-window views** — let different windows show different visible
+  units / selections (needs per-connection state on the server instead of the one
+  shared Controller). The opposite of today's shared-session model; useful for
+  comparing units side by side across monitors.
 
 ## Planned / ideas 🔭
 
-- **State preservation across tab hide/show** — remember view-state (pan/zoom,
-  gain) and last data so re-showing an `onlyWhenVisible` tab doesn't re-fetch /
-  re-fit. Pairs with the context-freeing work.
 - **Density as a scatter underlay / LOD-switch** — fold the density image under
   the amplitude scatter and auto-switch points↔density by zoom / point budget,
   instead of a separate tab.
@@ -70,9 +82,6 @@ Status legend: ✅ shipped · 🚧 in progress · 🔭 planned/idea · ⏸ parke
   units.
 - **Persist/restore layouts** — serialize the dockview layout (incl. popouts) so a
   session reopens where you left off.
-- **Independent per-window views** — let different windows show different visible
-  units (needs the spikelist + split paths to take explicit unit sets instead of
-  the shared Controller visibility).
 - **Density performance for huge spike counts** — `histogram2d` is O(N) per
   viewport; if it bottlenecks on tens of millions of spikes, cache a coarse global
   histogram that fine viewports re-bin from. Measure first (workspace policy).

@@ -21,12 +21,14 @@ export class TracemapView {
   private onGain?: (g: number) => void;
   private colorGain = 1; // higher = more contrast (smaller effective color limit)
   private lastFrame: DecodedFrame | null = null;
+  private detachGain: () => void;
+  private disposed = false;
 
   constructor(canvas: HTMLCanvasElement, sock: Sock, onGain?: (g: number) => void) {
     this.sock = sock;
     this.canvas = canvas;
     this.onGain = onGain;
-    attachGainKeys(canvas, (f) => this.bumpGain(f));
+    this.detachGain = attachGainKeys(canvas, (f) => this.bumpGain(f));
     this.deck = new Deck({
       canvas,
       views: [new OrthographicView({ id: "tm" })],
@@ -38,6 +40,15 @@ export class TracemapView {
         return viewState;
       },
     } as any);
+  }
+
+  // Release the GL context + the window keydown listener (attachGainKeys).
+  // Idempotent; called when the dockview tab is hidden.
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.detachGain();
+    this.deck.finalize();
   }
 
   private w() { return Math.max(200, this.canvas.clientWidth || 800); }
@@ -78,6 +89,7 @@ export class TracemapView {
   }
 
   private draw(frame: DecodedFrame) {
+    if (this.disposed) return; // a frame can land after the tab was hidden
     this.lastFrame = frame;
     const { header, buffers } = frame;
     const nChan = header.n_chan as number;

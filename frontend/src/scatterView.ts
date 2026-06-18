@@ -50,6 +50,9 @@ export class ScatterView {
   private path: [number, number][] = [];
   private highlightPos: Float32Array | null = null; // lasso region (white)
   private pickHi: Float32Array | null = null; // explicitly picked spikes (yellow)
+  private fpsTimer?: ReturnType<typeof setInterval>;
+  private stressRAF = 0;
+  private disposed = false;
 
   constructor(
     canvas: HTMLCanvasElement, overlay: HTMLElement, cb: ScatterCallbacks = {},
@@ -77,7 +80,21 @@ export class ScatterView {
     // Lasso pointer events come from the overlay (see setLassoMode), not the
     // canvas, so they never reach deck's controller.
     overlay.addEventListener("pointerdown", this.onDown);
-    setInterval(() => this.reportFps(), 500);
+    this.fpsTimer = setInterval(() => this.reportFps(), 500);
+  }
+
+  // Release the GL context + every timer/listener this view owns, so a hidden
+  // dockview tab (which React unmounts) doesn't leak a live WebGL context toward
+  // the browser's ~16-context cap. Idempotent.
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    clearInterval(this.fpsTimer);
+    if (this.stressRAF) cancelAnimationFrame(this.stressRAF);
+    this.overlay.removeEventListener("pointerdown", this.onDown);
+    window.removeEventListener("pointermove", this.onMove);
+    window.removeEventListener("pointerup", this.onUp);
+    this.deck.finalize();
   }
 
   private reportFps() {
@@ -114,6 +131,22 @@ export class ScatterView {
     const hp = new Float32Array(points.length * 2);
     for (let k = 0; k < points.length; k++) { hp[k * 2] = points[k][0]; hp[k * 2 + 1] = points[k][1]; }
     this.pickHi = hp;
+    this.paint();
+  }
+
+  // Render a completed lasso from a shared, world-space polygon: the outline +
+  // white dots for the sampled points inside it. Used by the window that drew it
+  // AND by other windows reproducing it from the broadcast. World coords, so it
+  // covers the same points regardless of each window's zoom. null -> wipe it.
+  showLasso(polygon: [number, number][] | null) {
+    if (!polygon || polygon.length < 3) {
+      this.highlightPos = null;
+      this.path = [];
+      this.paint();
+      return;
+    }
+    this.path = polygon;
+    this.highlightLocal(); // sets highlightPos + reports the local sampled count
     this.paint();
   }
 
@@ -299,6 +332,7 @@ export class ScatterView {
     let phase = 0;
     const base = this.fit(position);
     const loop = () => {
+      if (this.disposed) return;
       phase += 0.02;
       this.deck.setProps({
         viewState: {
@@ -306,8 +340,8 @@ export class ScatterView {
           zoom: base.zoom,
         },
       });
-      requestAnimationFrame(loop);
+      this.stressRAF = requestAnimationFrame(loop);
     };
-    requestAnimationFrame(loop);
+    this.stressRAF = requestAnimationFrame(loop);
   }
 }

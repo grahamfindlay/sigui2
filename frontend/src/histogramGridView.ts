@@ -9,6 +9,7 @@ export class HistogramGridView {
   private deck: Deck;
   private canvas: HTMLCanvasElement;
   private version = 0;
+  private disposed = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -21,7 +22,15 @@ export class HistogramGridView {
     } as any);
   }
 
+  // Release the GL context. Idempotent; called when the dockview tab is hidden.
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.deck.finalize();
+  }
+
   render(bins: Float32Array, counts: Float32Array, nUnits: number, nBins: number, colors: RGB[]) {
+    if (this.disposed) return; // a cached fetch can resolve after tab hidden
     if (nUnits === 0 || nBins === 0) { this.deck.setProps({ layers: [] }); return; }
 
     // Bin edges (length nBins+1). If only centers were sent, derive edges.

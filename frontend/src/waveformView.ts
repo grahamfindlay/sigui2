@@ -29,6 +29,8 @@ export class WaveformView {
   private units: WaveUnitData[] = [];
   private geom: WaveGeom | null = null;
   private onGain?: (g: number) => void;
+  private detachGain: () => void;
+  private disposed = false;
 
   constructor(canvas: HTMLCanvasElement, onGain?: (g: number) => void) {
     this.canvas = canvas;
@@ -40,7 +42,16 @@ export class WaveformView {
       controller: true,
       useDevicePixels: true,
     } as any);
-    attachGainKeys(canvas, (f) => this.bumpGain(f));
+    this.detachGain = attachGainKeys(canvas, (f) => this.bumpGain(f));
+  }
+
+  // Release the GL context + the window keydown listener (attachGainKeys).
+  // Idempotent; called when the dockview tab is hidden.
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.detachGain();
+    this.deck.finalize();
   }
 
   bumpGain(factor: number) {
@@ -93,7 +104,7 @@ export class WaveformView {
 
   private draw() {
     const geom = this.geom;
-    if (!geom) return;
+    if (this.disposed || !geom) return; // a fetch can resolve after tab hidden
     const units = this.units;
     if (!this.pitch) this.pitch = this.computePitch(geom.locations) || 20;
     const xs = (0.7 * this.pitch) / Math.max(1, geom.nSamples);
