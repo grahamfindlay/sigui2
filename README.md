@@ -12,8 +12,9 @@ It **reuses** the proven data + curation layer of `spikeinterface-gui`
 (`spikeinterface_gui.controller.Controller`) as a dependency, running it
 *headless* (no Qt/Panel event loop) behind a FastAPI/WebSocket service.
 
-See the design plan for the full architecture. Status: **Phase 0** (de-risking
-vertical slice).
+See the design plan for the full architecture. For shipped work, what's next, and
+ideas under consideration, see **[docs/ROADMAP.md](docs/ROADMAP.md)**. Developer
+notes live in `docs/developer_notes/`.
 
 ## Architecture (one line)
 
