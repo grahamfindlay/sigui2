@@ -222,3 +222,57 @@ The robust pattern (standard for deck.gl custom drag tools) is a transparent
   clears its highlight on any re-render (visibility change ⇒ stale selection); an
   external clear (toolbar/post-split) flows through a `selectionNonce` the pane
   watches, since the toolbar can't call the view directly.
+
+## Pick-highlight is coordinate-based, not working-set based
+
+A single spike selected by a single click or from the spikelist must highlight in
+the scatter. Highlighting it by **index** (intersect the selected id with the
+resident `spikeIndex`) mostly *misses*: the scatter renders a decimated sample, so
+the chosen spike usually isn't a rendered point. Instead highlight by **world
+coords**: the spikelist row already carries `t` and `amp` — which *are* the
+scatter's `x`/`y` (scatter coords are absolute `time_s`/amplitude, not
+view-relative) — and a single-click pick reads the clicked point's position. So a
+yellow marker is drawn at the exact coords regardless of sampling.
+
+- The scatter keeps **two independent highlight buffers**: `highlightPos` (lasso
+  region, white, working-set based) and `pickHi` (picked spikes, yellow,
+  coordinate based). They never fight over one buffer; `render()` clears both on a
+  new working set.
+- Shared state lives in `SiguiContext`: `pickedPoints` + `pickSpikes(indices,
+  points)` (sends `select_spikes` *and* sets the highlight coords). Both the
+  scatter pick callback and the spikelist row click call `pickSpikes`, so
+  selection is coherent in both directions (the spikelist re-pulls its window on
+  `pickedPoints` change to refresh the server `selected` flags).
+
+## Spikelist: windowed virtualization + the layout-effect ordering trap
+
+The spikelist can be millions of rows, so the server holds the ordered
+visible-spike index and ships `[offset, offset+LIMIT)` windows; the client
+virtualizes over `total` and **slides the window** when the viewport comes within
+`EDGE` rows of a loaded edge (guarded by a `pending` ref so it doesn't refetch
+mid-flight). Rows outside the loaded window render a `…` placeholder.
+
+The trap: the spikelist reads the server's **visible-spike** set, which only
+exists after `set_visible_units` is processed. React fires **child** passive
+effects before **parent** passive effects, so a panel's `[visibleUnits]` fetch
+runs *before* `App`'s `[visibleUnits]` sync — the list would lag one toggle. Fix:
+`App` sends `set_visible_units` from a **`useLayoutEffect`**; every layout effect
+runs before every passive effect, so visibility is synced on the socket before any
+panel's data request goes out. (The other views send explicit `unit_ids` per
+request, so only the spikelist depended on server-side visibility.)
+
+## Tracemap + probe (image / static-geometry views)
+
+- **Tracemap** reuses the trace viewport/refetch loop but renders a deck.gl
+  `BitmapLayer` instead of lines: the server returns a depth-ordered, time-mean-
+  binned `(n_channels, n_cols)` image + a suggested `color_limit`; the client maps
+  `[-limit, +limit] → [0,1]` through a diverging colormap (`colormap.ts::diverging`,
+  RdBu-reversed). `ImageData` is row-major `(width=n_cols, height=n_chan)`; with
+  `bounds=[t0, 0, t1, n_chan]` the first depth-ordered channel maps to the top.
+  Contrast is a `colorGain` that scales `color_limit` (same hover +/- keys as the
+  amplitude gain), redrawn from a cached `lastFrame`.
+- **Probe** geometry is static (from metadata: `channel_locations`,
+  `probe_contours`, `unit_positions`), so the view is built once and only the
+  visible-highlight re-renders on toggle: units are one `ScatterplotLayer` with
+  per-unit color + alpha (bright if visible, dim otherwise) + radius, contacts a
+  faint scatter, contours `PathLayer`s.

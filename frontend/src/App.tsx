@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DockviewReact, DockviewReadyEvent } from "dockview";
 import { Sock } from "./socket";
 import { CurationState, Meta, Selection, UnitId } from "./types";
@@ -22,6 +22,7 @@ export function App() {
   const [curation, setCuration] = useState<CurationState | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [selectionNonce, setSelectionNonce] = useState(0);
+  const [pickedPoints, setPickedPoints] = useState<[number, number][]>([]);
   const [gpu] = useState(gpuInfo);
 
   useEffect(() => {
@@ -40,21 +41,33 @@ export function App() {
   }, []);
 
   const curate = (msg: unknown) => sockRef.current?.send(msg);
+  // Select explicit spikes on the server + drive the scatter pick-highlight by
+  // their world coords (so it shows even for non-sampled spikes).
+  const pickSpikes = (indices: number[], points: [number, number][]) => {
+    sockRef.current?.send({ type: "select_spikes", indices });
+    setPickedPoints(points);
+  };
   // Clear the selection everywhere; the nonce makes the scatter wipe its lasso
   // highlight (which it owns) without a back-reference from here.
   const clearSelection = () => {
     setSelection(null);
+    setPickedPoints([]);
     setSelectionNonce((n) => n + 1);
   };
 
-  // Toggling visibility changes the working set, so any region selection is now
-  // stale -- drop it (the scatter view clears its own highlight on re-render).
-  useEffect(() => { setSelection(null); }, [visibleUnits]);
+  // Toggling visibility changes the working set, so any selection is now stale --
+  // drop it (the scatter view clears its own highlight on re-render).
+  useEffect(() => { setSelection(null); setPickedPoints([]); }, [visibleUnits]);
 
   // Keep the server's Controller visibility in sync with the UI. Off the data
   // hot path now (views fetch their own per-unit deltas); kept so selection/
-  // curation that read Controller.visible_unit_ids stay correct.
-  useEffect(() => {
+  // curation that read Controller.visible_unit_ids stay correct. Sent in a
+  // LAYOUT effect so it precedes panels' passive-effect data fetches in the same
+  // commit (child passive effects run before parent passive effects, but every
+  // layout effect runs before every passive effect) -- the spikelist reads the
+  // server's visible-spike set, so its window must be fetched against fresh
+  // visibility, not the previous toggle.
+  useLayoutEffect(() => {
     if (meta && sockRef.current) {
       sockRef.current.send({ type: "set_visible_units", unit_ids: visibleUnits });
     }
@@ -64,9 +77,9 @@ export function App() {
   const ctx = useMemo(
     () => (meta && curation && sockRef.current
       ? { sock: sockRef.current, meta, visibleUnits, setVisibleUnits, curation, curate,
-          selection, clearSelection, selectionNonce }
+          selection, clearSelection, selectionNonce, pickedPoints, pickSpikes }
       : null),
-    [meta, visibleUnits, curation, selection, selectionNonce],
+    [meta, visibleUnits, curation, selection, selectionNonce, pickedPoints],
   );
 
   if (!ctx || !meta) return <div style={{ padding: 12 }}>connecting…</div>;

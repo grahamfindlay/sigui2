@@ -127,6 +127,26 @@ def build_metadata(session: Session) -> dict:
     loc = ctrl.get_contact_location()  # (n_channels, 2)
     wf_min, wf_max = ctrl.get_waveforms_range()
 
+    # Probe view: per-unit position (x, y) keyed by id, + each probe's planar
+    # contour (outline) for context.
+    up = ctrl.unit_positions  # (n_units, 2)
+    unit_positions = {}
+    for i, u in enumerate(ctrl.unit_ids):
+        unit_positions[_uid(u)] = [float(up[i, 0]), float(up[i, 1])]
+    probe_contours = []
+    try:
+        for probe in ctrl.get_probegroup().probes:
+            c = getattr(probe, "probe_planar_contour", None)
+            if c is not None:
+                probe_contours.append([[float(x), float(y)] for x, y in c])
+    except Exception:  # pragma: no cover - probe geometry is best-effort context
+        pass
+
+    # Tracemap channel order: group, then depth (y), then -x -- mirrors sigui's
+    # tracemapview so the image reads top-of-probe at the top.
+    groups = np.asarray(ctrl.get_channel_groups())
+    channel_order = np.lexsort((-loc[:, 0], loc[:, 1], groups))
+
     return {
         "type": "metadata",
         "num_units": len(unit_ids),
@@ -146,6 +166,10 @@ def build_metadata(session: Session) -> dict:
         "nbefore": int(ctrl.nbefore),
         "n_template_samples": int(ctrl.templates_average.shape[1]),
         "template_abs_max": float(max(abs(wf_min), abs(wf_max))),
+        # Probe view + tracemap channel ordering.
+        "unit_positions": unit_positions,
+        "probe_contours": probe_contours,
+        "channel_order": [int(i) for i in channel_order],
     }
 
 
@@ -195,6 +219,98 @@ def build_trace_frame(
         fb.add("ymin", dec["ymin"].T.copy())  # (n_chan, n_bins)
         fb.add("ymax", dec["ymax"].T.copy())
     return fb.build(header)
+
+
+def build_tracemap_frame(
+    session: Session,
+    t0: float,
+    t1: float,
+    width_px: int,
+    seg: int = 0,
+) -> bytes:
+    """Traces as a depth x time **image** (channels rows, time columns).
+
+    Same viewport mechanism as the line trace view, but the channels are
+    depth-ordered (``metadata.channel_order``) and the window is mean-binned to
+    ``width_px`` columns, so the payload is ``(n_channels, n_cols)`` regardless of
+    zoom. The client colormaps it (diverging, symmetric about 0) with a
+    ``color_limit`` the server suggests as max|value|.
+    """
+    ctrl = session.controller
+    fs = session.sampling_frequency
+    start = max(0, int(t0 * fs))
+    end = min(ctrl.get_num_samples(seg), int(t1 * fs))
+    if end <= start:
+        end = min(ctrl.get_num_samples(seg), start + 2)
+
+    traces = ctrl.get_traces(segment_index=seg, start_frame=start, end_frame=end)
+    order = np.lexsort((
+        -ctrl.get_contact_location()[:, 0],
+        ctrl.get_contact_location()[:, 1],
+        np.asarray(ctrl.get_channel_groups()),
+    ))
+    traces = traces[:, order]  # (n_samples, n_chan) depth-ordered columns
+
+    n_samples = traces.shape[0]
+    n_cols = max(1, min(int(width_px), n_samples))
+    # Mean-bin time into n_cols columns: reduceat over each column's first index.
+    col_of = (np.arange(n_samples, dtype=np.int64) * n_cols) // n_samples
+    bounds = np.searchsorted(col_of, np.arange(n_cols))
+    sums = np.add.reduceat(traces, bounds, axis=0)  # (n_cols, n_chan)
+    counts = np.diff(np.append(bounds, n_samples)).astype("float64")
+    image = (sums / counts[:, None]).T.astype("float32")  # (n_chan, n_cols)
+
+    climit = float(np.max(np.abs(image))) if image.size else 1.0
+    header = {
+        "type": "tracemap_frame",
+        "seg": int(seg),
+        "t0": float(start / fs),
+        "t1": float(end / fs),
+        "n_chan": int(image.shape[0]),
+        "n_cols": int(image.shape[1]),
+        "color_limit": climit if climit > 0 else 1.0,
+    }
+    fb = FrameBuilder()
+    fb.add("image", image)  # (n_chan, n_cols) row-major: row=depth, col=time
+    return fb.build(header)
+
+
+def build_spikelist(
+    session: Session, offset: int, limit: int
+) -> dict:
+    """A window of the currently-visible spikes for the spikelist table.
+
+    The full ordered set can be millions of rows, so the server holds it (the
+    Controller's visible-spike index) and ships only the requested
+    ``[offset, offset+limit)`` slice as JSON. ``selected`` marks rows in the
+    current spike selection (e.g. from a scatter lasso).
+    """
+    ctrl = session.controller
+    visible = np.asarray(ctrl.get_indices_spike_visible())
+    total = int(visible.size)
+    lo = max(0, int(offset))
+    hi = min(total, lo + max(0, int(limit)))
+    window = visible[lo:hi]
+
+    spikes = ctrl.spikes
+    fs = session.sampling_frequency
+    amps = session.spike_amplitudes()
+    selected = set(int(i) for i in ctrl.get_indices_spike_selected())
+
+    rows = []
+    for gi in window:
+        gi = int(gi)
+        s = spikes[gi]
+        rows.append({
+            "i": gi,
+            "unit": _uid(ctrl.unit_ids[int(s["unit_index"])]),
+            "seg": int(s["segment_index"]),
+            "sample": int(s["sample_index"]),
+            "t": float(s["sample_index"] / fs),
+            "amp": (float(amps[gi]) if amps is not None else None),
+            "selected": gi in selected,
+        })
+    return {"type": "spikelist", "total": total, "offset": lo, "rows": rows}
 
 
 def build_scatter_frame(

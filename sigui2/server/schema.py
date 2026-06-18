@@ -51,6 +51,20 @@ class SelectRegion(BaseModel):
     unit_ids: list[Any] | None = None  # restrict to these units (visible by default)
 
 
+class TracemapRequest(BaseModel):
+    type: Literal["tracemap_request"]
+    t0: float
+    t1: float
+    width_px: int
+    seg: int = 0
+
+
+class SpikelistRequest(BaseModel):
+    type: Literal["spikelist_request"]
+    offset: int = 0
+    limit: int = 200
+
+
 class HeatmapRequest(BaseModel):
     type: Literal["heatmap_request"]
     view: str = "similarity"
@@ -121,7 +135,8 @@ class SaveCuration(BaseModel):
 ControlMessage = Annotated[
     Union[
         Hello, SetVisibleUnits, TraceViewport, ScatterRequest, SelectSpikes,
-        SelectRegion, HeatmapRequest, CorrelogramRequest, IsiRequest, WaveformRequest,
+        SelectRegion, TracemapRequest, SpikelistRequest, HeatmapRequest,
+        CorrelogramRequest, IsiRequest, WaveformRequest,
         MergeUnits, UnmergeUnits, DeleteUnits, RestoreUnits, LabelUnits,
         SplitUnits, UnsplitUnits, SaveCuration,
     ],

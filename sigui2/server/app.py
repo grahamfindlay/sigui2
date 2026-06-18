@@ -31,7 +31,9 @@ from .schema import (
     SelectRegion,
     SelectSpikes,
     SetVisibleUnits,
+    SpikelistRequest,
     SplitUnits,
+    TracemapRequest,
     TraceViewport,
     UnmergeUnits,
     UnsplitUnits,
@@ -84,6 +86,18 @@ async def _dispatch(ws: WebSocket, session: Session, msg) -> None:
             protocol.select_region, session, msg.view, msg.polygon, msg.unit_ids,
         )
         await ws.send_json(state)
+
+    elif isinstance(msg, TracemapRequest):
+        frame = await anyio.to_thread.run_sync(
+            protocol.build_tracemap_frame, session, msg.t0, msg.t1, msg.width_px, msg.seg,
+        )
+        await ws.send_bytes(frame)
+
+    elif isinstance(msg, SpikelistRequest):
+        rows = await anyio.to_thread.run_sync(
+            protocol.build_spikelist, session, msg.offset, msg.limit,
+        )
+        await ws.send_json(rows)
 
     elif isinstance(msg, HeatmapRequest):
         frame = await anyio.to_thread.run_sync(

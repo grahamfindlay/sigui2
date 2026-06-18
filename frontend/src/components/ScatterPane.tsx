@@ -45,12 +45,12 @@ export function ScatterPane(
   const [pick, setPick] = useState<number | null>(null);
   const [lasso, setLasso] = useState(false);
   const [localSel, setLocalSel] = useState(0);
-  const { selection, selectionNonce, clearSelection } = useSigui();
+  const { selection, selectionNonce, clearSelection, pickedPoints, pickSpikes } = useSigui();
 
   useEffect(() => {
-    const view = new ScatterView(canvasRef.current!, overlayRef.current!, sock, {
+    const view = new ScatterView(canvasRef.current!, overlayRef.current!, {
       onFps: setFps,
-      onPick: setPick,
+      onPick: (gi, point) => { setPick(gi); pickSpikes([gi], [point]); },
       onLassoLocal: setLocalSel,
       // Hand the world-space polygon to the server for the EXACT selection
       // (the rendered points are only a decimated sample). visRef keeps the
@@ -103,6 +103,12 @@ export function ScatterPane(
     setLocalSel(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectionNonce]);
+
+  // Picked spikes (single click here, or a spikelist row) highlight at their
+  // world coords -- shows even for spikes not in the decimated working set.
+  useEffect(() => {
+    viewRef.current?.highlightPoints(pickedPoints);
+  }, [pickedPoints]);
 
   const toggleLasso = () => {
     const next = !lasso;

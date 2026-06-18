@@ -60,6 +60,12 @@ def test_metadata(client):
     assert meta["has_spike_amplitudes"] is True
     assert len(meta["unit_ids"]) == 8
 
+    # Probe view + tracemap ordering.
+    assert len(meta["unit_positions"]) == meta["num_units"]
+    assert len(meta["channel_order"]) == meta["num_channels"]
+    assert sorted(meta["channel_order"]) == list(range(meta["num_channels"]))
+    assert isinstance(meta["probe_contours"], list)
+
     # Unit-list table: always carries num_spikes + firing_rate, one row per unit.
     assert meta["metric_columns"][:2] == ["num_spikes", "firing_rate"]
     assert set(str(k) for k in meta["unit_metrics"]) == set(str(u) for u in meta["unit_ids"])
@@ -231,6 +237,46 @@ def test_waveform_frame(client):
     assert len(u0["channels"]) == u0["n_channels"]
     seg = bufs["values"][u0["offset"]: u0["offset"] + u0["n_channels"] * ns]
     assert seg.size == u0["n_channels"] * ns
+
+
+def test_tracemap_frame(client):
+    # 1 s @ 30 kHz binned to 200 columns -> a (n_chan, n_cols) image.
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "tracemap_request", "t0": 0.0, "t1": 1.0, "width_px": 200})
+        header, bufs = decode_frame(ws.receive_bytes())
+    assert header["type"] == "tracemap_frame"
+    nch, ncol = header["n_chan"], header["n_cols"]
+    assert nch == 32 and ncol <= 200
+    assert bufs["image"].shape == (nch, ncol)  # row = depth-ordered channel, col = time
+    assert header["color_limit"] > 0
+
+
+def test_spikelist_window(client):
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "hello"})
+        meta = ws.receive_json()
+        units = meta["unit_ids"][:3]
+        ws.send_json({"type": "set_visible_units", "unit_ids": units})
+        assert ws.receive_json()["type"] == "ack"
+
+        ws.send_json({"type": "spikelist_request", "offset": 0, "limit": 50})
+        r = ws.receive_json()
+        assert r["type"] == "spikelist"
+        assert r["total"] > 0 and r["offset"] == 0
+        assert len(r["rows"]) == min(50, r["total"])
+        row0 = r["rows"][0]
+        assert {"i", "unit", "seg", "sample", "t", "amp", "selected"} <= set(row0)
+        # Every listed spike belongs to a visible unit.
+        vis = {str(u) for u in units}
+        assert all(str(row["unit"]) in vis for row in r["rows"])
+
+        # Selecting a spike marks exactly that row in the next window.
+        ws.send_json({"type": "select_spikes", "indices": [row0["i"]]})
+        assert ws.receive_json()["type"] == "ack"
+        ws.send_json({"type": "spikelist_request", "offset": 0, "limit": 50})
+        r2 = ws.receive_json()
+        sel_rows = [row for row in r2["rows"] if row["selected"]]
+        assert [row["i"] for row in sel_rows] == [row0["i"]]
 
 
 def test_heatmap_frame(client):

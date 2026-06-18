@@ -19,6 +19,21 @@ export interface Meta {
   nbefore: number;
   n_template_samples: number;
   template_abs_max: number;
+  // Probe view + tracemap channel ordering.
+  unit_positions: Record<string, [number, number]>; // unit id -> (x, y) on the probe
+  probe_contours: [number, number][][]; // each probe's planar outline
+  channel_order: number[]; // depth-ordered channel indices (tracemap rows)
+}
+
+// One row of the spikelist window (server JSON, not a binary frame).
+export interface SpikeRow {
+  i: number; // global spike index
+  unit: UnitId;
+  seg: number;
+  sample: number;
+  t: number; // seconds
+  amp: number | null;
+  selected: boolean;
 }
 
 export interface LabelDefinition {

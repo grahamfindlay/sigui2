@@ -17,6 +17,10 @@ export interface SiguiCtx {
   selection: Selection | null;
   clearSelection: () => void; // drop the selection everywhere (also clears the lasso)
   selectionNonce: number; // bumps on clearSelection so the scatter wipes its highlight
+  // Individually picked spikes (single click or spikelist row): world coords for
+  // the scatter pick-highlight + the action that selects them on the server.
+  pickedPoints: [number, number][];
+  pickSpikes: (indices: number[], points: [number, number][]) => void;
 }
 
 export const SiguiContext = createContext<SiguiCtx | null>(null);

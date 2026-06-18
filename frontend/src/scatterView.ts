@@ -11,11 +11,13 @@
 // repaints, to measure the raw GPU ceiling on the user's display machine.
 import { Deck, OrthographicView } from "@deck.gl/core";
 import { ScatterplotLayer, PolygonLayer } from "@deck.gl/layers";
-import { Sock } from "./socket";
 
 export interface ScatterCallbacks {
   onFps?: (n: number) => void;
-  onPick?: (globalSpikeIndex: number) => void;
+  // A single-click pick: the spike's global index + its world (x, y) so the
+  // caller can drive the shared pick-highlight (which is coordinate-based, not
+  // working-set based, so it shows even for non-sampled spikes).
+  onPick?: (globalSpikeIndex: number, point: [number, number]) => void;
   onLasso?: (worldPolygon: [number, number][]) => void; // -> exact server query
   onLassoLocal?: (sampledCount: number) => void; // immediate local highlight count
 }
@@ -34,7 +36,6 @@ function pointInPolygon(x: number, y: number, poly: [number, number][]): boolean
 
 export class ScatterView {
   private deck: Deck;
-  private sock: Sock;
   private canvas: HTMLCanvasElement;
   private overlay: HTMLElement;
   private position: Float32Array = new Float32Array(0);
@@ -47,13 +48,12 @@ export class ScatterView {
   private lassoMode = false;
   private drawing = false;
   private path: [number, number][] = [];
-  private highlightPos: Float32Array | null = null;
+  private highlightPos: Float32Array | null = null; // lasso region (white)
+  private pickHi: Float32Array | null = null; // explicitly picked spikes (yellow)
 
   constructor(
-    canvas: HTMLCanvasElement, overlay: HTMLElement, sock: Sock,
-    cb: ScatterCallbacks = {},
+    canvas: HTMLCanvasElement, overlay: HTMLElement, cb: ScatterCallbacks = {},
   ) {
-    this.sock = sock;
     this.canvas = canvas;
     this.overlay = overlay;
     this.cb = cb;
@@ -68,8 +68,9 @@ export class ScatterView {
         if (this.lassoMode) return; // clicks belong to the lasso when it's active
         if (info && info.index >= 0 && this.spikeIndex.length) {
           const gi = this.spikeIndex[info.index];
-          this.sock.send({ type: "select_spikes", indices: [gi] });
-          this.cb.onPick?.(gi);
+          const x = this.position[info.index * 2], y = this.position[info.index * 2 + 1];
+          // The caller (ScatterPane) sends select_spikes + sets the pick highlight.
+          this.cb.onPick?.(gi, [x, y]);
         }
       },
     });
@@ -99,8 +100,20 @@ export class ScatterView {
 
   clearSelection() {
     this.highlightPos = null;
+    this.pickHi = null;
     this.path = [];
     this.cb.onLassoLocal?.(0);
+    this.paint();
+  }
+
+  // Highlight explicitly picked spikes at their world coords (from a single
+  // click or the spikelist). Coordinate-based, so it shows even for spikes that
+  // aren't in the decimated working set. Independent of the lasso highlight.
+  highlightPoints(points: [number, number][]) {
+    if (!points.length) { this.pickHi = null; this.paint(); return; }
+    const hp = new Float32Array(points.length * 2);
+    for (let k = 0; k < points.length; k++) { hp[k * 2] = points[k][0]; hp[k * 2 + 1] = points[k][1]; }
+    this.pickHi = hp;
     this.paint();
   }
 
@@ -214,6 +227,18 @@ export class ScatterView {
         getFillColor: [255, 255, 255, 235], pickable: false,
       } as any));
     }
+    if (this.pickHi && this.pickHi.length) {
+      layers.push(new ScatterplotLayer({
+        id: `pick-${this.version}`,
+        data: { length: this.pickHi.length / 2, attributes: {
+          getPosition: { value: this.pickHi, size: 2 },
+        } },
+        radiusUnits: "pixels", getRadius: 3.6, radiusMinPixels: 3,
+        stroked: true, filled: true, antialiasing: true,
+        getFillColor: [255, 225, 0, 255], getLineColor: [25, 25, 25, 255],
+        lineWidthUnits: "pixels", getLineWidth: 1, pickable: false,
+      } as any));
+    }
     if (this.path.length >= 2) {
       layers.push(new PolygonLayer({
         id: `lasso-${this.version}`,
@@ -237,9 +262,10 @@ export class ScatterView {
     this.position = position;
     this._color = color;
     this.spikeIndex = spikeIndex;
-    // The working set changed (units toggled / curation): any prior region
-    // selection is stale, so drop the highlight + lasso outline.
+    // The working set changed (units toggled / curation): any prior selection is
+    // stale, so drop both highlights + the lasso outline.
     this.highlightPos = null;
+    this.pickHi = null;
     this.path = [];
     this.cb.onLassoLocal?.(0);
 
