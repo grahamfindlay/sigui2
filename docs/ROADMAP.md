@@ -27,6 +27,14 @@ Status legend: ✅ shipped · 🚧 in progress · 🔭 planned/idea · ⏸ parke
   shared coordinate-based pick-highlight (single click + spikelist row).
 - **Amplitude/contrast gain** on trace/tracemap/waveform; hover +/- keys + corner
   control.
+- **Self-driven UX harness** (`frontend/uxtest/snap.mjs`): drives the running app
+  with the system Chrome via `playwright-core` (no bundled-browser download) —
+  load, wait, scripted click/drag/keyboard, screenshot, console/error capture,
+  `page.evaluate` introspection. Lets UI changes be verified headlessly without a
+  human. WebGL runs on SwiftShader (software): visuals faithful, **fps not
+  meaningful**; real-GPU perf + true multi-monitor still need a human for final
+  sign-off. Multi-window/popup is scriptable, so independent-windows + broadcast
+  can be tested headlessly too.
 
 ## Next up 🚧
 
@@ -38,10 +46,8 @@ Status legend: ✅ shipped · 🚧 in progress · 🔭 planned/idea · ⏸ parke
   window (native deck.gl canvases, all interactions work) on another monitor; the
   server broadcasts shared state (visibility, curation, selection) to all
   connected windows so they stay in sync. One coherent session across monitors.
-  (This is the chosen multi-monitor path — see Parked: popout.)
-- **Self-driven UX testing harness** — headless Chromium (Playwright) on the
-  server to launch/interact/screenshot client sessions, so UI changes can be
-  verified without a human in the loop (software WebGL: correctness yes, fps no).
+  (This is the chosen multi-monitor path — see Parked: popout. Now testable
+  headlessly via the UX harness.)
 
 ## Planned / ideas 🔭
 
