@@ -59,11 +59,6 @@ Status legend: ✅ shipped · 🚧 in progress · 🔭 planned/idea · ⏸ parke
 - **State preservation across tab hide/show** — remember view-state (pan/zoom,
   gain) + last data so re-showing an `onlyWhenVisible` tab doesn't re-fetch /
   re-fit. The natural follow-on to the context-freeing work.
-- **Independent per-window views** — let different windows show different visible
-  units / selections (needs per-connection state on the server instead of the one
-  shared Controller). The opposite of today's shared-session model; useful for
-  comparing units side by side across monitors.
-
 ## Planned / ideas 🔭
 
 - **Density as a scatter underlay / LOD-switch** — fold the density image under
@@ -92,6 +87,10 @@ Status legend: ✅ shipped · 🚧 in progress · 🔭 planned/idea · ⏸ parke
 
 ## Parked ⏸
 
+- **Independent per-window views** — explicitly **not planned** (user, 2026-06-18).
+  The shared-session model (one Controller, all windows kept in sync) is the
+  intended design; do not re-propose per-connection/independent visibility or
+  selection.
 - **dockview popout** (explored, then **reverted** at user request — did not want
   a half-working feature in the tree; commit `b9f52a3` removed). Render + zoom +
   sync across windows worked, but interaction (pan / gain / lasso) inside a
