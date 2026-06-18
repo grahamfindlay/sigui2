@@ -20,6 +20,7 @@ from .schema import (
     ControlMessage,
     CorrelogramRequest,
     DeleteUnits,
+    DensityRequest,
     Hello,
     HeatmapRequest,
     IsiRequest,
@@ -98,6 +99,16 @@ async def _dispatch(ws: WebSocket, session: Session, msg) -> None:
             protocol.build_spikelist, session, msg.offset, msg.limit,
         )
         await ws.send_json(rows)
+
+    elif isinstance(msg, DensityRequest):
+        bounds = None
+        if None not in (msg.x0, msg.x1, msg.y0, msg.y1):
+            bounds = (msg.x0, msg.x1, msg.y0, msg.y1)
+        frame = await anyio.to_thread.run_sync(
+            protocol.build_density_frame, session, msg.view, bounds,
+            msg.width_px, msg.height_px, msg.unit_ids,
+        )
+        await ws.send_bytes(frame)
 
     elif isinstance(msg, HeatmapRequest):
         frame = await anyio.to_thread.run_sync(

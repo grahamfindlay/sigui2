@@ -9,6 +9,7 @@ import { useSigui } from "./SiguiContext";
 import { TracePane } from "./components/TracePane";
 import { TracemapPane } from "./components/TracemapPane";
 import { ScatterPane } from "./components/ScatterPane";
+import { DensityPane } from "./components/DensityPane";
 import { HeatmapPane } from "./components/HeatmapPane";
 import { HistogramPane } from "./components/HistogramPane";
 import { WaveformPane } from "./components/WaveformPane";
@@ -43,6 +44,10 @@ function ScatterPanel() {
   const { sock, meta, visibleUnits } = useSigui();
   return <ScatterPane sock={sock} meta={meta} visibleUnits={visibleUnits} stress={STRESS} />;
 }
+function DensityPanel() {
+  const { sock, visibleUnits } = useSigui();
+  return <DensityPane sock={sock} visibleUnits={visibleUnits} />;
+}
 function HeatmapPanel() {
   const { sock } = useSigui();
   return <HeatmapPane sock={sock} />;
@@ -72,6 +77,7 @@ export const panelComponents = {
   trace: TracePanel,
   tracemap: TracemapPanel,
   scatter: ScatterPanel,
+  density: DensityPanel,
   heatmap: HeatmapPanel,
   waveform: WaveformPanel,
   probe: ProbePanel,
@@ -121,6 +127,10 @@ export function buildDefaultLayout(api: DockviewApi): void {
     position: { referencePanel: "trace", direction: "within" },
   });
   api.addPanel({
+    id: "density", component: "density", title: "density",
+    position: { referencePanel: "scatter", direction: "within" },
+  });
+  api.addPanel({
     id: "probe", component: "probe", title: "probe",
     position: { referencePanel: "waveform", direction: "within" },
   });
@@ -130,6 +140,7 @@ export function buildDefaultLayout(api: DockviewApi): void {
   });
   // Leave the original tab active in each group so the default looks unchanged.
   api.getPanel("trace")?.api.setActive();
+  api.getPanel("scatter")?.api.setActive();
   api.getPanel("waveform")?.api.setActive();
   api.getPanel("units")?.api.setActive();
 

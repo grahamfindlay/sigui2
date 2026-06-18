@@ -65,6 +65,20 @@ class SpikelistRequest(BaseModel):
     limit: int = 200
 
 
+class DensityRequest(BaseModel):
+    type: Literal["density_request"]
+    view: str = "amplitude"
+    # Viewport bounds in scatter world coords (x=time_s, y=amplitude). All four
+    # None -> the server bins the full data range and returns the bounds it used.
+    x0: float | None = None
+    x1: float | None = None
+    y0: float | None = None
+    y1: float | None = None
+    width_px: int = 1024
+    height_px: int = 512
+    unit_ids: list[Any] | None = None  # visible by default
+
+
 class HeatmapRequest(BaseModel):
     type: Literal["heatmap_request"]
     view: str = "similarity"
@@ -135,7 +149,7 @@ class SaveCuration(BaseModel):
 ControlMessage = Annotated[
     Union[
         Hello, SetVisibleUnits, TraceViewport, ScatterRequest, SelectSpikes,
-        SelectRegion, TracemapRequest, SpikelistRequest, HeatmapRequest,
+        SelectRegion, TracemapRequest, SpikelistRequest, DensityRequest, HeatmapRequest,
         CorrelogramRequest, IsiRequest, WaveformRequest,
         MergeUnits, UnmergeUnits, DeleteUnits, RestoreUnits, LabelUnits,
         SplitUnits, UnsplitUnits, SaveCuration,

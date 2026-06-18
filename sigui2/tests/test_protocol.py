@@ -279,6 +279,36 @@ def test_spikelist_window(client):
         assert [row["i"] for row in sel_rows] == [row0["i"]]
 
 
+def test_density_frame(client):
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "hello"})
+        meta = ws.receive_json()
+        units = meta["unit_ids"][:4]
+        ws.send_json({"type": "set_visible_units", "unit_ids": units})
+        assert ws.receive_json()["type"] == "ack"
+
+        # No bounds -> server bins the full data range and reports it back.
+        ws.send_json({"type": "density_request", "view": "amplitude",
+                      "unit_ids": units, "width_px": 128, "height_px": 64})
+        header, bufs = decode_frame(ws.receive_bytes())
+        assert header["type"] == "density_frame"
+        W, H = header["width"], header["height"]
+        assert W <= 128 and H <= 64
+        assert bufs["counts"].shape == (H, W)
+        assert header["x0"] < header["x1"] and header["y0"] < header["y1"]
+        assert header["n_spikes"] > 0 and header["vmax"] > 0
+        # Auto-range covers every spike, so the histogram total == n_spikes.
+        assert int(round(float(bufs["counts"].sum()))) == header["n_spikes"]
+
+        # Explicit viewport bounds are echoed back unchanged.
+        ws.send_json({"type": "density_request", "unit_ids": units,
+                      "x0": 0.0, "x1": 1.0, "y0": -200.0, "y1": 200.0,
+                      "width_px": 50, "height_px": 40})
+        h2, b2 = decode_frame(ws.receive_bytes())
+        assert abs(h2["x0"]) < 1e-9 and abs(h2["x1"] - 1.0) < 1e-9
+        assert b2["counts"].shape == (h2["height"], h2["width"])
+
+
 def test_heatmap_frame(client):
     with client.websocket_connect("/ws") as ws:
         ws.send_json({"type": "heatmap_request", "view": "similarity"})

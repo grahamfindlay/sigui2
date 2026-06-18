@@ -276,3 +276,32 @@ request, so only the spikelist depended on server-side visibility.)
   visible-highlight re-renders on toggle: units are one `ScatterplotLayer` with
   per-unit color + alpha (bright if visible, dim otherwise) + radius, contacts a
   faint scatter, contours `PathLayer`s.
+
+## 2D density: faithful, viewport-rebinned histogram (vs the sampled scatter)
+
+The amplitude scatter renders a per-unit *decimated sample*, so its visual density
+lies (the cap flattens high-rate units) and it overplots when zoomed out. The
+`density` view (`densityView.ts`, a tab next to the scatter) is the faithful
+companion: the server bins the **full** spike set of the visible units into a 2D
+histogram (`lod/scatter.py::density_image` → `protocol.build_density_frame`) and
+sends a `BitmapLayer` image. Pixels only, no picking.
+
+- **Viewport-driven re-binning** (the key idea): it's wired like the trace/tracemap
+  views — each pan/zoom settle sends the current world bounds and the server
+  re-bins over *exactly* that range at canvas resolution. Zooming in refines the
+  histogram, it doesn't magnify pixels. A first request with no bounds bins the
+  full data range and returns the bounds, which the client fits to once.
+- **Orientation**: `density_image` returns `(H, W)` with row 0 = min-y bin, but a
+  `BitmapLayer` draws image row 0 at the TOP (max y under `bounds=[x0,y0,x1,y1]`),
+  so the server `np.flipud`s the image — then the density is spatially identical
+  to the scatter (same world coords, same `OrthographicView`).
+- **Colormap**: log-scaled (`log1p(count)/log1p(vmax)`, `vmax` = 99th pct of
+  nonzero bins) through viridis; **empty bins get alpha 0** so the dark canvas
+  reads as "no spikes". Spike density is heavy-tailed — a linear map saturates.
+- **Lasso works here for free** (not yet wired): region-select is coordinate-based
+  and server-exact, so a polygon drawn on the density maps to the same
+  `select_region` query — a more honest curation surface than the sampled scatter
+  for high-rate units.
+- **Perf note**: `histogram2d` is O(N) per viewport change. Fine for synthetic /
+  typical; for tens of millions of spikes, measure first (workspace policy) and,
+  if needed, cache a coarse global histogram that fine viewports re-bin from.

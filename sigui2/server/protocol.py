@@ -354,6 +354,70 @@ def build_scatter_frame(
     return fb.build(header)
 
 
+def build_density_frame(
+    session: Session,
+    view: str,
+    bounds: tuple | None,
+    width_px: int,
+    height_px: int,
+    unit_ids: list | None,
+) -> bytes:
+    """A 2D histogram of the visible units' spikes for the zoomed-out overview.
+
+    Unlike the scatter (a per-unit decimated *sample*), this bins the **full**
+    per-spike arrays, so the density is faithful. It is viewport-driven like the
+    trace/tracemap views: a request carries the current world bounds and the
+    server re-bins over exactly that range at canvas resolution -- zooming in is a
+    finer histogram, not just magnified pixels. ``bounds`` None -> bin the full
+    data range and report it back so the client can fit.
+    """
+    ctrl = session.controller
+    units = session.to_unit_ids(unit_ids) if unit_ids else list(ctrl.get_visible_unit_ids())
+    y_all = session.spike_amplitudes() if view == "amplitude" else None
+
+    W = int(min(max(int(width_px), 1), 2048))
+    H = int(min(max(int(height_px), 1), 1024))
+    empty = {"type": "density_frame", "view": view, "width": 0, "height": 0,
+             "n_spikes": 0, "x0": 0.0, "x1": 1.0, "y0": 0.0, "y1": 1.0, "vmax": 1.0}
+    if y_all is None or not units:
+        return FrameBuilder().build(empty)
+
+    x_all = session.spike_times_seconds()
+    parts = [np.asarray(ctrl.get_spike_indices(u)) for u in units]
+    gidx = np.concatenate(parts) if parts else np.zeros(0, dtype="int64")
+    if gidx.size == 0:
+        return FrameBuilder().build(empty)
+    x = x_all[gidx]
+    y = y_all[gidx]
+
+    if bounds is None:
+        x0, x1 = float(x.min()), float(x.max())
+        y0, y1 = float(y.min()), float(y.max())
+        mx = (x1 - x0) * 0.02 or 1e-3
+        my = (y1 - y0) * 0.02 or 1e-3
+        x0, x1, y0, y1 = x0 - mx, x1 + mx, y0 - my, y1 + my
+    else:
+        x0, x1, y0, y1 = (float(v) for v in bounds)
+
+    counts = lod_scatter.density_image(x, y, (x0, x1), (y0, y1), W, H)  # (H, W)
+    # BitmapLayer draws image row 0 at the TOP (max y), but density_image row 0 is
+    # the min-y bin -- flip so the image is spatially faithful to the scatter.
+    image = np.flipud(counts).astype("float32", copy=False)
+    nz = image[image > 0]
+    vmax = float(np.percentile(nz, 99)) if nz.size else 1.0
+
+    header = {
+        "type": "density_frame", "view": view,
+        "x0": x0, "x1": x1, "y0": y0, "y1": y1,
+        "width": W, "height": H,
+        "vmax": vmax if vmax > 0 else 1.0,
+        "n_spikes": int(gidx.size),
+    }
+    fb = FrameBuilder()
+    fb.add("counts", image)  # (H, W) row-major; row 0 = max y (top)
+    return fb.build(header)
+
+
 def build_selection_state(session: Session) -> dict:
     """The current spike selection summarized for the client.
 
