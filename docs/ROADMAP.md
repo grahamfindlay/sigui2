@@ -89,6 +89,15 @@ rests on a workflow/scientific assumption the user should confirm.
   Linux/headless harness can't reproduce macOS OS-level interception, so it can
   pass on a combo that's dead on a real Mac — pick combos by the policy, not the
   harness.
+- **Curation + quality-label hotkeys (parity C2/C3)**: bare-letter hotkeys on the
+  units pane that fire the existing curation actions on the selected units —
+  `d`/`e`/`r`/`u`/`x` (delete/merge/restore/unmerge/unsplit) and `c`/`g`/`m`/`n`
+  (clear/good/MUA/noise). Each is one `useKeybinding(...)` in `UnitListView.tsx`
+  gated by the same predicate as its toolbar button (a no-op exactly when the
+  button is disabled); labels bind to whichever category carries the default
+  quality option-set (driven from `label_definitions`, not hardcoded). Pure
+  frontend — rides the existing curation broadcast, so changes sync across
+  windows. Browser-safe per the F4 policy (`e` for merge since bare `m` is MUA).
 - **Self-driven UX harness** (`frontend/uxtest/snap.mjs`): drives the running app
   with the system Chrome via `playwright-core` (no bundled-browser download) —
   load, wait, scripted click/drag/keyboard, screenshot, console/error capture,
@@ -102,8 +111,9 @@ rests on a workflow/scientific assumption the user should confirm.
   sync), `mainsettings.mjs` (global settings panel: max_visible_units trims the
   visible set + syncs across windows), `keybindings.mjs` (F4 dispatcher: gain
   keys context-scoped to the hovered pane + Space/Alt-arrow unit nav, synced
-  across windows), and `snap.mjs tabcycle` (no WebGL-context leak across tab
-  switches).
+  across windows), `curationkeys.mjs` (C2/C3 hotkeys: d/e/r/u merge·delete·
+  restore·unmerge + c/g/m labels, units-pane-scoped, synced across windows), and
+  `snap.mjs tabcycle` (no WebGL-context leak across tab switches).
 
 ## Next up 🚧
 
@@ -180,17 +190,17 @@ dominate); see the order subsection at the end.
   (M). Actions exist; the review/undo surface doesn't (only unit-table badges).
   Compact 3-section panel; rows clickable to select + navigate the involved
   units (better than Qt's static tables).
-- **C2 · Curation keybindings** `[parity]` (S, **F4 ready**): delete, merge,
-  restore, unmerge, unsplit. (Space + Alt+↑/↓ already shipped with F4.) Each is
-  one `useKeybinding(...)` over the existing `UnitListView.tsx` action, gated
-  `when: () => curation`. **Do NOT copy upstream's Ctrl+D/M/R/U/X** — Ctrl/Cmd +
-  letter is browser/OS reserved (Cmd+D bookmark, Cmd+R reload, Cmd+M minimize,
-  Cmd+X cut). Choose browser-safe combos at build time per the F4 policy: prefer
-  bare letters, but note bare `m` collides with the C3 MUA label, so the curation
-  actions need distinct letters (or an `e.code`-based modifier combo).
-- **C3 · Quality-label hotkeys c/g/m/n** `[parity]` (S, **F4 ready**): clear /
-  good / mua / noise on selected units. Enhance: drive from `label_definitions`,
-  not hardcoded to "quality".
+- **C2 · Curation keybindings** ✅ **shipped** `[parity]` (S): `d` delete · `e`
+  merge · `r` restore · `u` unmerge · `x` unsplit, scoped to the units pane, each
+  gated by the same predicate as its toolbar button (`UnitListView.tsx`). Bare
+  letters per the F4 policy (NOT upstream's browser-reserved Ctrl+D/M/R/U/X); `e`
+  for merge since bare `m` is the C3 MUA label. (Space + Alt+↑/↓ shipped with F4;
+  `split` stays mouse-driven — it acts on the lasso region, not the row set.)
+- **C3 · Quality-label hotkeys c/g/m/n** ✅ **shipped** `[parity][enhance]` (S):
+  `c` clear · `g` good · `m` MUA · `n` noise on the selected units. Driven from
+  `label_definitions` (binds to whichever category's options are the default
+  quality set, not the hardcoded name "quality"); inert when no such category
+  exists.
 - **C4 · Focus mode** `[parity]` (S): hide chrome to maximize plot area. Cheap;
   low priority. Upstream uses Ctrl+F, but that is browser Find (Cmd+F on macOS) —
   pick a browser-safe key per the F4 policy (e.g. bare `f` to toggle, `Esc` to
@@ -281,9 +291,9 @@ dominate); see the order subsection at the end.
   and segment-nav each unblock a whole group.
 - **Phase B — High-reuse, high-payoff:** S1+S2 (one scatter generalization →
   three views), W7 cross-correlograms + W6 similarity click-select (the
-  merge-decision toolkit), C1+C2+C3 (curation view + hotkeys — browser-safe
-  combos per the F4 policy, not upstream's Ctrl+letter/Ctrl+arrow), U1 (column
-  chooser). Each is cheap *given Phase A* and serves daily curation.
+  merge-decision toolkit), C1 (curation review view; C2+C3 hotkeys already
+  shipped), U1 (column chooser). Each is cheap *given Phase A* and serves daily
+  curation.
 - **Phase C — Waveform & trace richness:** W1–W4 (needs F1), T1–T4 (needs F3),
   W5 waveform heatmap.
 - **Phase D — Analysis views & polish:** S4 spike-rate (needs F3), S3 metrics
