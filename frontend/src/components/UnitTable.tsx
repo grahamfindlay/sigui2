@@ -10,6 +10,7 @@ import {
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { CurationState, Meta, UnitId } from "../types";
+import { useKeybinding } from "../keybindings";
 
 interface Row {
   id: UnitId;
@@ -100,6 +101,33 @@ export function UnitTable(
       anchorRef.current = idx;
     }
   };
+
+  // Alt+↑/↓ (when the units pane is active): step to the prev/next unit in the
+  // current sorted order and show it ALONE -- mirrors upstream's "visible-alone"
+  // nav (set_visible_unit_ids([id])). "Current" = the sole visible unit if
+  // exactly one is visible, else the single selected unit, else first/last.
+  // NB: upstream (Qt) uses Ctrl+↑/↓, but Ctrl+arrows are macOS Mission Control /
+  // App Exposé / Spaces -- grabbed by the OS before the browser sees them. Alt is
+  // browser- and OS-safe (and arrows, unlike letters, aren't composed by Option).
+  const stepUnit = (dir: 1 | -1) => {
+    if (rows.length === 0) return;
+    const indexOfId = (k: string) => rows.findIndex((r) => String(r.original.id) === k);
+    let cur = -1;
+    if (visibleUnits.length === 1) cur = indexOfId(String(visibleUnits[0]));
+    else if (selected.size === 1) cur = indexOfId([...selected][0]);
+    const next = cur === -1
+      ? (dir === 1 ? 0 : rows.length - 1)
+      : Math.min(rows.length - 1, Math.max(0, cur + dir));
+    const nid = rows[next].original.id;
+    setVisibleUnits([nid]);
+    setSelected(new Set([String(nid)]));
+    anchorRef.current = next;
+    rowVirtualizer.scrollToIndex(next, { align: "auto" });
+  };
+  useKeybinding("alt+arrowdown", () => stepUnit(1),
+    { context: "units", label: "next unit (shown alone)" });
+  useKeybinding("alt+arrowup", () => stepUnit(-1),
+    { context: "units", label: "previous unit (shown alone)" });
 
   const allVisible = meta.unit_ids.length > 0 && visibleUnits.length === meta.unit_ids.length;
   const someVisible = visibleUnits.length > 0 && !allVisible;

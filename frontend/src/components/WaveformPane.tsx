@@ -30,7 +30,8 @@ function splitWaveformFrame(frame: DecodedFrame): Map<string, WaveUnit> {
 }
 
 export function WaveformPane(
-  { sock, meta, visibleUnits }: { sock: Sock; meta: Meta; visibleUnits: UnitId[] },
+  { sock, meta, visibleUnits, paneId }:
+  { sock: Sock; meta: Meta; visibleUnits: UnitId[]; paneId: string },
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const cvRef = useRef<CachedUnitView<WaveUnit> | null>(null);
@@ -38,7 +39,7 @@ export function WaveformPane(
   const [gain, setGain] = useState(1);
 
   useEffect(() => {
-    const view = new WaveformView(canvasRef.current!, setGain);
+    const view = new WaveformView(canvasRef.current!, paneId, setGain);
     viewRef.current = view;
     cvRef.current = new CachedUnitView<WaveUnit>(
       sock,

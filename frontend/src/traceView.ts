@@ -24,14 +24,14 @@ export class TraceView {
   private disposed = false;
 
   constructor(
-    canvas: HTMLCanvasElement, sock: Sock,
+    canvas: HTMLCanvasElement, sock: Sock, paneId: string,
     onFps?: (n: number) => void, onGain?: (g: number) => void,
   ) {
     this.sock = sock;
     this.canvas = canvas;
     this.onFps = onFps;
     this.onGain = onGain;
-    this.detachGain = attachGainKeys(canvas, (f) => this.bumpGain(f));
+    this.detachGain = attachGainKeys(paneId, (f) => this.bumpGain(f));
     this.deck = new Deck({
       canvas,
       views: [new OrthographicView({ id: "t" })],
@@ -49,8 +49,8 @@ export class TraceView {
     }, 500);
   }
 
-  // Release the GL context + FPS timer + the window keydown listener attached by
-  // attachGainKeys. Idempotent; called when the dockview tab is hidden.
+  // Release the GL context + FPS timer + the dispatcher gain bindings registered
+  // by attachGainKeys. Idempotent; called when the dockview tab is hidden.
   dispose() {
     if (this.disposed) return;
     this.disposed = true;

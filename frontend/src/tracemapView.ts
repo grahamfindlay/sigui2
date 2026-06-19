@@ -24,11 +24,11 @@ export class TracemapView {
   private detachGain: () => void;
   private disposed = false;
 
-  constructor(canvas: HTMLCanvasElement, sock: Sock, onGain?: (g: number) => void) {
+  constructor(canvas: HTMLCanvasElement, sock: Sock, paneId: string, onGain?: (g: number) => void) {
     this.sock = sock;
     this.canvas = canvas;
     this.onGain = onGain;
-    this.detachGain = attachGainKeys(canvas, (f) => this.bumpGain(f));
+    this.detachGain = attachGainKeys(paneId, (f) => this.bumpGain(f));
     this.deck = new Deck({
       canvas,
       views: [new OrthographicView({ id: "tm" })],
@@ -42,7 +42,7 @@ export class TracemapView {
     } as any);
   }
 
-  // Release the GL context + the window keydown listener (attachGainKeys).
+  // Release the GL context + the dispatcher gain bindings (attachGainKeys).
   // Idempotent; called when the dockview tab is hidden.
   dispose() {
     if (this.disposed) return;

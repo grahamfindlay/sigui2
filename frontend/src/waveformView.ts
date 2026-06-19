@@ -32,7 +32,7 @@ export class WaveformView {
   private detachGain: () => void;
   private disposed = false;
 
-  constructor(canvas: HTMLCanvasElement, onGain?: (g: number) => void) {
+  constructor(canvas: HTMLCanvasElement, paneId: string, onGain?: (g: number) => void) {
     this.canvas = canvas;
     this.onGain = onGain;
     this.deck = new Deck({
@@ -42,10 +42,10 @@ export class WaveformView {
       controller: true,
       useDevicePixels: true,
     } as any);
-    this.detachGain = attachGainKeys(canvas, (f) => this.bumpGain(f));
+    this.detachGain = attachGainKeys(paneId, (f) => this.bumpGain(f));
   }
 
-  // Release the GL context + the window keydown listener (attachGainKeys).
+  // Release the GL context + the dispatcher gain bindings (attachGainKeys).
   // Idempotent; called when the dockview tab is hidden.
   dispose() {
     if (this.disposed) return;

@@ -65,6 +65,30 @@ rests on a workflow/scientific assumption the user should confirm.
   already enforces it in `set_visible_unit_ids`), so lowering it re-applies +
   trims the visible set and re-broadcasts the existing `visible_units` message to
   every window. `color_mode` + `use_times` are deferred (see F2b/F2c below).
+- **Keybinding dispatcher foundation (parity F4)**: one context-aware dispatcher
+  (`frontend/src/keybindings.ts`) replaces the scattered per-view `window`
+  keydown listeners. A single window listener matches the pressed key against a
+  registry of bindings; a binding fires only when its `context` is `"global"` or
+  equals the active pane — the pane the pointer is over, reported by a `PaneFocus`
+  wrapper (`data-pane=<id>`) that lifts the old per-canvas hover model into one
+  shared signal. React components register via a `useKeybinding` hook (handler in
+  a ref → no re-register churn / stale closures); the imperative view classes
+  register through `gainControl.attachGainKeys`, so the amplitude gain `+/-` keys
+  now route through the dispatcher (scoped to their pane) instead of owning
+  listeners. Proven on two unit-list bindings: **Space** (make the selected units
+  the visible set) and **Alt+↑/↓** (prev/next unit shown alone, over the table's
+  sorted order). Pure-frontend: every binding calls an existing `SiguiContext`
+  action, so cross-window sync rides the existing broadcast for free. Curation
+  (C2) + quality-label (C3) hotkeys are now each "register one more binding."
+  **Browser-/OS-safe combo policy** (documented in `keybindings.ts`): the app is
+  a browser tab, often on macOS, so a combo the OS swallows never reaches
+  `preventDefault`. Avoid Ctrl/Cmd+arrows (Mission Control / Spaces) → use
+  **Alt+arrows**; avoid Ctrl/Cmd+letters (bookmark/save/reload/minimize/find) →
+  prefer **bare letters** for pane-scoped actions (typing surfaces are guarded);
+  Alt+letter via `e.key` is unsafe on macOS (Option composes special chars). A
+  Linux/headless harness can't reproduce macOS OS-level interception, so it can
+  pass on a combo that's dead on a real Mac — pick combos by the policy, not the
+  harness.
 - **Self-driven UX harness** (`frontend/uxtest/snap.mjs`): drives the running app
   with the system Chrome via `playwright-core` (no bundled-browser download) —
   load, wait, scripted click/drag/keyboard, screenshot, console/error capture,
@@ -76,8 +100,10 @@ rests on a workflow/scientific assumption the user should confirm.
   lasso highlight/outline + cross-window clear), `picksync.mjs` (shared pick
   readout), `settings.mjs` (per-view settings panel round-trip + cross-window
   sync), `mainsettings.mjs` (global settings panel: max_visible_units trims the
-  visible set + syncs across windows), and `snap.mjs tabcycle` (no WebGL-context
-  leak across tab switches).
+  visible set + syncs across windows), `keybindings.mjs` (F4 dispatcher: gain
+  keys context-scoped to the hovered pane + Space/Alt-arrow unit nav, synced
+  across windows), and `snap.mjs tabcycle` (no WebGL-context leak across tab
+  switches).
 
 ## Next up 🚧
 
@@ -134,9 +160,19 @@ dominate); see the order subsection at the end.
   `trace_viewport` has a `seg` arg but no UI; sigui has segment dropdown + time
   slider + scrollbar. Shared segment+time control. Unblocks trace depth,
   spike-rate, event.
-- **F4 · Keybinding dispatcher** `[foundation][enhance]` (M). One context-aware
-  dispatcher (focus = unit-list vs scatter) instead of scattered `window`
-  listeners; curation + nav hotkeys plug in. Unblocks Group C.
+- **F4 · Keybinding dispatcher** ✅ **dispatcher + gain migration shipped**
+  `[foundation][enhance]` (M). One context-aware dispatcher
+  (`frontend/src/keybindings.ts`) replaced the scattered `window` listeners: a
+  single window keydown listener matches against a binding registry, firing a
+  binding only when its `context` is `"global"` or the active pane (set by the
+  pointer-over pane via a `PaneFocus` `data-pane` wrapper). The amplitude gain
+  `+/-` keys were migrated onto it (scoped to their pane), and a `useKeybinding`
+  hook lets React panes register. Proven on **Space** (visible = selected) and
+  **Alt+↑/↓** (prev/next unit shown alone; Alt not Ctrl — Ctrl+arrows are macOS
+  Mission Control). See the browser-/OS-safe combo policy in the Shipped F4 bullet
+  + `keybindings.ts`. **Remaining (Group C):** the curation and label hotkeys —
+  each is now just one `useKeybinding(...)` against an action that already exists
+  in `UnitListView.tsx`.
 
 ### Group C — Curation completeness
 
@@ -144,14 +180,21 @@ dominate); see the order subsection at the end.
   (M). Actions exist; the review/undo surface doesn't (only unit-table badges).
   Compact 3-section panel; rows clickable to select + navigate the involved
   units (better than Qt's static tables).
-- **C2 · Curation keybindings** `[parity]` (S, needs F4): space (toggle visible),
-  ctrl+↑/↓ (prev/next unit visible-alone), ctrl+D (delete), ctrl+M (merge),
-  ctrl+R/U/X (restore/unmerge/unsplit).
-- **C3 · Quality-label hotkeys c/g/m/n** `[parity]` (S, needs F4): clear / good /
-  mua / noise on selected units. Enhance: drive from `label_definitions`, not
-  hardcoded to "quality".
-- **C4 · Focus mode (Ctrl+F)** `[parity]` (S): hide chrome to maximize plot area.
-  Cheap; low priority.
+- **C2 · Curation keybindings** `[parity]` (S, **F4 ready**): delete, merge,
+  restore, unmerge, unsplit. (Space + Alt+↑/↓ already shipped with F4.) Each is
+  one `useKeybinding(...)` over the existing `UnitListView.tsx` action, gated
+  `when: () => curation`. **Do NOT copy upstream's Ctrl+D/M/R/U/X** — Ctrl/Cmd +
+  letter is browser/OS reserved (Cmd+D bookmark, Cmd+R reload, Cmd+M minimize,
+  Cmd+X cut). Choose browser-safe combos at build time per the F4 policy: prefer
+  bare letters, but note bare `m` collides with the C3 MUA label, so the curation
+  actions need distinct letters (or an `e.code`-based modifier combo).
+- **C3 · Quality-label hotkeys c/g/m/n** `[parity]` (S, **F4 ready**): clear /
+  good / mua / noise on selected units. Enhance: drive from `label_definitions`,
+  not hardcoded to "quality".
+- **C4 · Focus mode** `[parity]` (S): hide chrome to maximize plot area. Cheap;
+  low priority. Upstream uses Ctrl+F, but that is browser Find (Cmd+F on macOS) —
+  pick a browser-safe key per the F4 policy (e.g. bare `f` to toggle, `Esc` to
+  exit), NOT Ctrl/Cmd+F.
 - **C5 · Auto-merge suggestions (MergeView)** `[enhance]` (L): runs
   `compute_auto_merge` presets and proposes merges. Useful but compute-heavy and
   a leaf — order last. Enhance: async with progress; proposals as an
@@ -238,7 +281,8 @@ dominate); see the order subsection at the end.
   and segment-nav each unblock a whole group.
 - **Phase B — High-reuse, high-payoff:** S1+S2 (one scatter generalization →
   three views), W7 cross-correlograms + W6 similarity click-select (the
-  merge-decision toolkit), C1+C2+C3 (curation view + hotkeys), U1 (column
+  merge-decision toolkit), C1+C2+C3 (curation view + hotkeys — browser-safe
+  combos per the F4 policy, not upstream's Ctrl+letter/Ctrl+arrow), U1 (column
   chooser). Each is cheap *given Phase A* and serves daily curation.
 - **Phase C — Waveform & trace richness:** W1–W4 (needs F1), T1–T4 (needs F3),
   W5 waveform heatmap.

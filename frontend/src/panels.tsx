@@ -4,8 +4,10 @@
 // renders the existing pane component. The wrappers ignore IDockviewPanelProps;
 // all their data comes from context, so they re-render when App's state (visible
 // units, etc.) changes -- which props-via-addPanel would not do.
+import { ReactNode } from "react";
 import { DockviewApi } from "dockview";
 import { useSigui } from "./SiguiContext";
+import { setActiveContext } from "./keybindings";
 import { TracePane } from "./components/TracePane";
 import { TracemapPane } from "./components/TracemapPane";
 import { ScatterPane } from "./components/ScatterPane";
@@ -20,54 +22,87 @@ import { UnitListView } from "./components/UnitListView";
 // Stress is a fixed GPU benchmark switch (?stress=N); read once at module load.
 const STRESS = parseInt(new URLSearchParams(location.search).get("stress") || "0", 10);
 
+// Wraps a panel's content and reports its id to the keybinding dispatcher when
+// the pointer enters it -- the single "which pane is active" signal that scopes
+// context-aware hotkeys (gain +/-, unit-list nav, etc.). Fills the dockview
+// panel body so the inner pane's width/height:100% still resolves.
+function PaneFocus({ id, children }: { id: string; children: ReactNode }) {
+  return (
+    <div data-pane={id} style={{ width: "100%", height: "100%" }}
+      onPointerEnter={() => setActiveContext(id)}>
+      {children}
+    </div>
+  );
+}
+
 function UnitsPanel() {
-  return <UnitListView />;
+  return <PaneFocus id="units"><UnitListView /></PaneFocus>;
 }
 function TracePanel() {
   const { sock, meta } = useSigui();
-  return <TracePane sock={sock} meta={meta} />;
+  return <PaneFocus id="trace"><TracePane sock={sock} meta={meta} paneId="trace" /></PaneFocus>;
 }
 function TracemapPanel() {
   const { sock, meta } = useSigui();
-  return <TracemapPane sock={sock} meta={meta} />;
+  return (
+    <PaneFocus id="tracemap"><TracemapPane sock={sock} meta={meta} paneId="tracemap" /></PaneFocus>
+  );
 }
 function ProbePanel() {
   const { meta, visibleUnits } = useSigui();
-  return <ProbePane meta={meta} visibleUnits={visibleUnits} />;
+  return <PaneFocus id="probe"><ProbePane meta={meta} visibleUnits={visibleUnits} /></PaneFocus>;
 }
 function SpikelistPanel() {
   const { sock, meta, visibleUnits, selection, pickedPoints, pickSpikes } = useSigui();
-  return <SpikelistPane sock={sock} meta={meta} visibleUnits={visibleUnits}
-    selection={selection} pickedPoints={pickedPoints} pickSpikes={pickSpikes} />;
+  return (
+    <PaneFocus id="spikelist">
+      <SpikelistPane sock={sock} meta={meta} visibleUnits={visibleUnits}
+        selection={selection} pickedPoints={pickedPoints} pickSpikes={pickSpikes} />
+    </PaneFocus>
+  );
 }
 function ScatterPanel() {
   const { sock, meta, visibleUnits } = useSigui();
-  return <ScatterPane sock={sock} meta={meta} visibleUnits={visibleUnits} stress={STRESS} />;
+  return (
+    <PaneFocus id="scatter">
+      <ScatterPane sock={sock} meta={meta} visibleUnits={visibleUnits} stress={STRESS} />
+    </PaneFocus>
+  );
 }
 function DensityPanel() {
   const { sock, visibleUnits } = useSigui();
-  return <DensityPane sock={sock} visibleUnits={visibleUnits} />;
+  return (
+    <PaneFocus id="density"><DensityPane sock={sock} visibleUnits={visibleUnits} /></PaneFocus>
+  );
 }
 function HeatmapPanel() {
   const { sock } = useSigui();
-  return <HeatmapPane sock={sock} />;
+  return <PaneFocus id="heatmap"><HeatmapPane sock={sock} /></PaneFocus>;
 }
 function WaveformPanel() {
   const { sock, meta, visibleUnits } = useSigui();
-  return <WaveformPane sock={sock} meta={meta} visibleUnits={visibleUnits} />;
+  return (
+    <PaneFocus id="waveform">
+      <WaveformPane sock={sock} meta={meta} visibleUnits={visibleUnits} paneId="waveform" />
+    </PaneFocus>
+  );
 }
 function IsiPanel() {
   const { sock, meta, visibleUnits } = useSigui();
   return (
-    <HistogramPane sock={sock} meta={meta} visibleUnits={visibleUnits}
-      requestType="isi_request" replyType="isi_frame" label="ISI" />
+    <PaneFocus id="isi">
+      <HistogramPane sock={sock} meta={meta} visibleUnits={visibleUnits}
+        requestType="isi_request" replyType="isi_frame" label="ISI" />
+    </PaneFocus>
   );
 }
 function AcgPanel() {
   const { sock, meta, visibleUnits } = useSigui();
   return (
-    <HistogramPane sock={sock} meta={meta} visibleUnits={visibleUnits}
-      requestType="correlogram_request" replyType="correlogram_frame" label="auto-correlogram" />
+    <PaneFocus id="acg">
+      <HistogramPane sock={sock} meta={meta} visibleUnits={visibleUnits}
+        requestType="correlogram_request" replyType="correlogram_frame" label="auto-correlogram" />
+    </PaneFocus>
   );
 }
 

@@ -2,6 +2,7 @@
 // (the curation target set) lives here; visibility lives in the table rows.
 import { useMemo, useState } from "react";
 import { useSigui } from "../SiguiContext";
+import { useKeybinding } from "../keybindings";
 import { UnitTable } from "./UnitTable";
 
 function Btn(
@@ -35,6 +36,13 @@ export function UnitListView() {
   // Split uses the server-side region selection (lasso on the scatter), not the
   // row selection: it splits every unit the lassoed spikes belong to.
   const doSplit = () => { curate({ type: "split_units" }); clearSelection(); };
+
+  // Space (when the units pane is active): make the selected units the visible
+  // set -- mirrors upstream's Space ("set visible_unit_ids to selected"). The
+  // server cap (max_visible_units) still applies. The first proof binding on the
+  // F4 keybinding dispatcher; curation/label hotkeys (C2/C3) plug in the same way.
+  useKeybinding("space", () => { if (sel.length) setVisibleUnits(sel); },
+    { context: "units", label: "show selected units only" });
 
   return (
     <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", background: "#161616" }}>

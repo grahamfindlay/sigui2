@@ -5,14 +5,14 @@ import { TraceView } from "../traceView";
 import { labelStyle, fpsStyle, paneStyle, canvasStyle } from "./paneStyles";
 import { GainControl } from "./GainControl";
 
-export function TracePane({ sock, meta }: { sock: Sock; meta: Meta }) {
+export function TracePane({ sock, meta, paneId }: { sock: Sock; meta: Meta; paneId: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewRef = useRef<TraceView | null>(null);
   const [fps, setFps] = useState(0);
   const [gain, setGain] = useState(1);
 
   useEffect(() => {
-    const view = new TraceView(canvasRef.current!, sock, setFps, setGain);
+    const view = new TraceView(canvasRef.current!, sock, paneId, setFps, setGain);
     viewRef.current = view;
     view.init(meta.duration_s);
     return () => { view.dispose(); viewRef.current = null; };

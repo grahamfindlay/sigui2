@@ -5,13 +5,13 @@ import { TracemapView } from "../tracemapView";
 import { labelStyle, paneStyle, canvasStyle } from "./paneStyles";
 import { GainControl } from "./GainControl";
 
-export function TracemapPane({ sock, meta }: { sock: Sock; meta: Meta }) {
+export function TracemapPane({ sock, meta, paneId }: { sock: Sock; meta: Meta; paneId: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewRef = useRef<TracemapView | null>(null);
   const [gain, setGain] = useState(1);
 
   useEffect(() => {
-    const view = new TracemapView(canvasRef.current!, sock, setGain);
+    const view = new TracemapView(canvasRef.current!, sock, paneId, setGain);
     viewRef.current = view;
     view.init(meta.duration_s);
     return () => { view.dispose(); viewRef.current = null; };
