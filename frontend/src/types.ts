@@ -45,6 +45,10 @@ export interface Meta {
   // current shared values a late-joining window adopts on connect.
   view_settings_catalog: Record<string, ViewSettingDescriptor[]>;
   view_settings: Record<string, Record<string, ViewSettingValue>>;
+  // Application-global settings (F2): a flat descriptor catalog + current values
+  // (e.g. max_visible_units). Same descriptor shape as the per-view settings.
+  main_settings_catalog: ViewSettingDescriptor[];
+  main_settings: Record<string, ViewSettingValue>;
 }
 
 // One row of the spikelist window (server JSON, not a binary frame).

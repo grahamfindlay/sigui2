@@ -177,6 +177,10 @@ def build_metadata(session: Session) -> dict:
         # and the current shared values (which a late-joining window adopts).
         "view_settings_catalog": view_settings.catalog(),
         "view_settings": session.view_settings,
+        # Application-global settings (F2): the flat descriptor catalog + the
+        # current values (read from controller.main_settings, the value owner).
+        "main_settings_catalog": view_settings.main_catalog(),
+        "main_settings": session.main_settings_values(),
     }
 
 

@@ -18,6 +18,10 @@ export interface SiguiCtx {
   // The descriptor catalog lives on `meta.view_settings_catalog`.
   viewSettings: Record<string, Record<string, ViewSettingValue>>;
   setViewSetting: (view: string, name: string, value: ViewSettingValue) => void;
+  // Application-global settings (F2): current shared values + a setter, same
+  // round-trip as the per-view ones. Catalog lives on `meta.main_settings_catalog`.
+  mainSettings: Record<string, ViewSettingValue>;
+  setMainSetting: (name: string, value: ViewSettingValue) => void;
   // Current scatter region selection (drives the split action + readout).
   selection: Selection | null;
   clearSelection: () => void; // drop the selection everywhere (server + all windows)

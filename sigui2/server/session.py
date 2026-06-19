@@ -57,6 +57,13 @@ class Session:
         # declarative catalog. The view builders read from here like they read
         # the shared visibility, so a setting change re-shapes the next frame.
         self.view_settings = view_settings.defaults()
+        # Application-global settings (F2). The Controller already owns + enforces
+        # these (e.g. it caps visibility by main_settings['max_visible_units']), so
+        # we keep the VALUE in controller.main_settings (single source of truth) and
+        # only push the descriptor defaults into it, leaving any Controller default
+        # we don't manage untouched.
+        for k, v in view_settings.main_defaults().items():
+            self.controller.main_settings[k] = v
         # Attach our handler so any future view wiring / curation notify has a
         # target (Controller's "web" branch leaves signal_handler unset).
         self.controller.signal_handler = WebSignalHandler(self.controller)
@@ -64,12 +71,26 @@ class Session:
         # Seed a deterministic initial visibility (first <=8 units). The shared
         # session reports this live set in build_metadata, so every window --
         # including ones opened later on a second monitor -- adopts the SAME set
-        # instead of each clobbering it with its own default.
+        # instead of each clobbering it with its own default. Clamp to the visible
+        # cap so it stays correct if max_visible_units is ever defaulted below 8
+        # (no change today: 8 < 10).
+        cap = self.controller.main_settings["max_visible_units"]
         ids = list(self.controller.unit_ids)
-        self.controller.set_visible_unit_ids(ids[: min(8, len(ids))])
+        self.controller.set_visible_unit_ids(ids[: min(8, cap, len(ids))])
         self.controller.update_visible_spikes()
 
     # --- convenience accessors used by the LOD layer / views -----------------
+
+    def main_settings_values(self) -> dict:
+        """Current values of the F2-managed application-global settings.
+
+        Read straight from ``controller.main_settings`` (the single source of
+        truth + enforcer) so the client + a SetMainSetting echo never diverge
+        from what the Controller actually applies.
+        """
+        from . import view_settings
+
+        return {k: self.controller.main_settings[k] for k in view_settings.main_defaults()}
 
     @property
     def sampling_frequency(self) -> float:

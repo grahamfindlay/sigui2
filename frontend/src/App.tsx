@@ -4,6 +4,7 @@ import { Sock } from "./socket";
 import { CurationState, Meta, Selection, SelectionMsg, UnitId, ViewSettingValue } from "./types";
 import { SiguiContext } from "./SiguiContext";
 import { panelComponents, buildDefaultLayout } from "./panels";
+import { MainSettings } from "./components/SettingsPanel";
 
 // Report the actual WebGL renderer. "SwiftShader"/"llvmpipe" means software
 // rendering (e.g. a remote desktop on a headless host) -- fps would be bogus.
@@ -33,6 +34,8 @@ export function App() {
   const [lassoPolygon, setLassoPolygon] = useState<[number, number][] | null>(null);
   // Per-view settings (F1): shared session values, keyed {view: {name: value}}.
   const [viewSettings, setViewSettings] = useState<Record<string, Record<string, ViewSettingValue>>>({});
+  // Application-global settings (F2): shared session values, keyed {name: value}.
+  const [mainSettings, setMainSettings] = useState<Record<string, ViewSettingValue>>({});
   const [gpu] = useState(gpuInfo);
   // Key of the visible set we last sent to (or adopted from) the server. The
   // set_visible_units layout effect skips re-sending when it still matches,
@@ -48,6 +51,7 @@ export function App() {
       // Adopt the current shared per-view settings (a late-joining window picks
       // up whatever the others have set).
       setViewSettings(m.view_settings ?? {});
+      setMainSettings(m.main_settings ?? {});
       // Adopt the server's live shared visibility so a window opened later on a
       // second monitor inherits the current set instead of overriding it. Seed
       // the guard so this adoption doesn't immediately echo back as a send.
@@ -90,6 +94,12 @@ export function App() {
     // so adopting a broadcast can't loop -- only the explicit setter sends.
     sock.on("view_settings", (m: { view: string; settings: Record<string, ViewSettingValue> }) =>
       setViewSettings((prev) => ({ ...prev, [m.view]: m.settings })));
+    // A global setting changed (this window or another). Adopt the authoritative
+    // values. No echo-guard for the same reason as view_settings -- only the
+    // explicit setter sends. A max_visible_units change also arrives as a
+    // separate `visible_units` broadcast (the trimmed set), handled above.
+    sock.on("main_settings", (m: { settings: Record<string, ViewSettingValue> }) =>
+      setMainSettings(m.settings));
     sock.ready.then(() => sock.send({ type: "hello" }));
   }, []);
 
@@ -101,6 +111,13 @@ export function App() {
   const setViewSetting = (view: string, name: string, value: ViewSettingValue) => {
     sockRef.current?.send({ type: "set_view_setting", view, name, value });
     setViewSettings((prev) => ({ ...prev, [view]: { ...(prev[view] ?? {}), [name]: value } }));
+  };
+  // Change an application-global setting (F2). Same round-trip as setViewSetting:
+  // send + optimistic local update; the server validates, applies its reaction
+  // (e.g. trims visibility for max_visible_units), and broadcasts to every window.
+  const setMainSetting = (name: string, value: ViewSettingValue) => {
+    sockRef.current?.send({ type: "set_main_setting", name, value });
+    setMainSettings((prev) => ({ ...prev, [name]: value }));
   };
   // Select explicit spikes on the server + drive the scatter pick-highlight by
   // their world coords (so it shows even for non-sampled spikes).
@@ -151,10 +168,10 @@ export function App() {
     () => (meta && curation && sockRef.current
       ? { sock: sockRef.current, meta, visibleUnits, setVisibleUnits, curation, curate,
           selection, clearSelection, selectionNonce, pickedPoints, pickedIndices, pickSpikes,
-          lassoPolygon, viewSettings, setViewSetting }
+          lassoPolygon, viewSettings, setViewSetting, mainSettings, setMainSetting }
       : null),
     [meta, visibleUnits, curation, selection, selectionNonce, pickedPoints, pickedIndices,
-     lassoPolygon, viewSettings],
+     lassoPolygon, viewSettings, mainSettings],
   );
 
   if (!ctx || !meta) return <div style={{ padding: 12 }}>connecting…</div>;
@@ -162,24 +179,30 @@ export function App() {
   const onReady = (event: DockviewReadyEvent) => buildDefaultLayout(event.api);
 
   return (
-    <div style={{ display: "grid", gridTemplateRows: "26px 1fr", height: "100vh" }}>
-      <div style={{ display: "flex", gap: 18, alignItems: "center", padding: "0 10px",
-        background: "#1b1b1b", borderBottom: "1px solid #333" }}>
-        <strong>sigui2</strong>
-        <span style={{ color: "#9ab" }}>GPU: {gpu}</span>
-        <span style={{ color: "#9ab" }}>
-          {meta.num_units} units · {meta.num_channels} ch · {meta.duration_s.toFixed(0)}s
-        </span>
-      </div>
-      <div style={{ minHeight: 0 }}>
-        <SiguiContext.Provider value={ctx}>
+    // Provider wraps the WHOLE app (toolbar + dockview) so the toolbar's global
+    // settings gear can read context too, not just the panes.
+    <SiguiContext.Provider value={ctx}>
+      <div style={{ display: "grid", gridTemplateRows: "26px 1fr", height: "100vh" }}>
+        <div style={{ display: "flex", gap: 18, alignItems: "center", padding: "0 10px",
+          background: "#1b1b1b", borderBottom: "1px solid #333" }}>
+          <strong>sigui2</strong>
+          <span style={{ color: "#9ab" }}>GPU: {gpu}</span>
+          <span style={{ color: "#9ab" }}>
+            {meta.num_units} units · {meta.num_channels} ch · {meta.duration_s.toFixed(0)}s
+          </span>
+          {/* Application-global settings gear (F2), pushed to the right edge. */}
+          <div style={{ marginLeft: "auto" }}>
+            <MainSettings />
+          </div>
+        </div>
+        <div style={{ minHeight: 0 }}>
           <DockviewReact
             components={panelComponents}
             onReady={onReady}
             className="dockview-theme-abyss"
           />
-        </SiguiContext.Provider>
+        </div>
       </div>
-    </div>
+    </SiguiContext.Provider>
   );
 }

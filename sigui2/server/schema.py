@@ -116,6 +116,15 @@ class SetViewSetting(BaseModel):
     value: Any
 
 
+class SetMainSetting(BaseModel):
+    type: Literal["set_main_setting"]
+    # An application-global setting (F2; e.g. "max_visible_units"). Same shape as
+    # SetViewSetting minus the view -- validated against the MAIN_SETTINGS catalog
+    # and echoed to every window via a "main_settings" broadcast.
+    name: str
+    value: Any
+
+
 # --- curation control plane (mutations -> server echoes a "curation" state) ---
 
 
@@ -168,7 +177,7 @@ ControlMessage = Annotated[
         Hello, SetVisibleUnits, TraceViewport, ScatterRequest, SelectSpikes,
         SelectRegion, ClearSelection, TracemapRequest, SpikelistRequest, DensityRequest,
         HeatmapRequest, CorrelogramRequest, IsiRequest, WaveformRequest,
-        SetViewSetting,
+        SetViewSetting, SetMainSetting,
         MergeUnits, UnmergeUnits, DeleteUnits, RestoreUnits, LabelUnits,
         SplitUnits, UnsplitUnits, SaveCuration,
     ],

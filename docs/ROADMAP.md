@@ -57,6 +57,14 @@ rests on a workflow/scientific assumption the user should confirm.
   validate/clamp + shared-session broadcast to every window; `scope` decides
   client-redraw vs server-refetch. Proven on the amplitude scatter (point size +
   max spikes/unit). Other views get settings by adding catalog entries.
+- **Global settings foundation (parity F2, `max_visible_units`)**: a flat global
+  catalog (`MAIN_SETTINGS` in `server/view_settings.py`, sharing F1's `_coerce`
+  validation) + a top-bar `MainSettings` gear (reuses F1's `Control` renderer) +
+  a `set_main_setting` round-trip. `max_visible_units` replaces the hardcoded
+  visible-unit cap; the value lives in `controller.main_settings` (the Controller
+  already enforces it in `set_visible_unit_ids`), so lowering it re-applies +
+  trims the visible set and re-broadcasts the existing `visible_units` message to
+  every window. `color_mode` + `use_times` are deferred (see F2b/F2c below).
 - **Self-driven UX harness** (`frontend/uxtest/snap.mjs`): drives the running app
   with the system Chrome via `playwright-core` (no bundled-browser download) —
   load, wait, scripted click/drag/keyboard, screenshot, console/error capture,
@@ -67,7 +75,9 @@ rests on a workflow/scientific assumption the user should confirm.
   `multiwin.mjs` (visibility broadcast + clamp reconcile), `selsync.mjs` (shared
   lasso highlight/outline + cross-window clear), `picksync.mjs` (shared pick
   readout), `settings.mjs` (per-view settings panel round-trip + cross-window
-  sync), and `snap.mjs tabcycle` (no WebGL-context leak across tab switches).
+  sync), `mainsettings.mjs` (global settings panel: max_visible_units trims the
+  visible set + syncs across windows), and `snap.mjs tabcycle` (no WebGL-context
+  leak across tab switches).
 
 ## Next up 🚧
 
@@ -102,10 +112,24 @@ dominate); see the order subsection at the end.
   settings — each is now just more catalog entries, no plumbing. Widest
   dependency — almost every entry below needs it (bins, percentiles, colormaps,
   caps, modes).
-- **F2 · Global settings** `[foundation][parity]` (M): `max_visible_units`
-  (replaces today's hardcoded ~10 cap), `color_mode` (by_unit / only_visible /
-  by_visibility), `use_times` (real recording times vs samples — valuable for
-  48 h recordings). Small MainSettings panel; rides F1.
+- **F2 · Global settings** ✅ **panel + `max_visible_units` shipped**
+  `[foundation][parity]` (M). A top-bar `MainSettings` gear (rides F1's `Control`
+  renderer + a `set_main_setting` round-trip) now exposes `max_visible_units`,
+  replacing the hardcoded ~10 cap — the value lives in `controller.main_settings`
+  (already the enforcer), so lowering it trims + re-broadcasts the visible set to
+  every window. **Deferred:**
+  - **F2b · `color_mode`** (by_unit / only_visible / by_visibility): needs a live
+    `unit_colors` rebroadcast, swapping ~5 metadata-driven views off static
+    `meta.unit_colors`, a scatter refetch (colors are baked into its frame), and
+    recomputing colors on visibility change for the two visibility-dependent modes
+    (matching upstream `refresh_colors`).
+  - **F2c · `use_times`** (real recording times vs sample-derived seconds —
+    valuable for 48 h recordings): route every time-producing builder
+    (scatter/trace/tracemap/spikelist) through the Controller's time API
+    (`sample_index_to_time` / `get_times_chunk`), and **measure** whole-spike-train
+    conversion cost on a real long recording before claiming it's free. Both ride
+    the shipped MainSettings panel — each is "add a descriptor + its server
+    reaction."
 - **F3 · Segment navigation + time-seek** `[foundation][parity]` (M). sigui2's
   `trace_viewport` has a `seg` arg but no UI; sigui has segment dropdown + time
   slider + scrollbar. Shared segment+time control. Unblocks trace depth,

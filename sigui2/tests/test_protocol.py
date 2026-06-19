@@ -556,8 +556,10 @@ def test_set_view_setting_validates_and_broadcasts():
     window (shared session); an unknown setting is an error, not a broadcast."""
     client = _fresh_client(num_units=6)
     with client.websocket_connect("/ws") as ws1, client.websocket_connect("/ws") as ws2:
-        ws1.send_json({"type": "hello"}); ws1.receive_json()
-        ws2.send_json({"type": "hello"}); ws2.receive_json()
+        ws1.send_json({"type": "hello"})
+        ws1.receive_json()
+        ws2.send_json({"type": "hello"})
+        ws2.receive_json()
 
         # Above the max -> clamped, and BOTH windows receive the cleaned dict.
         ws1.send_json({"type": "set_view_setting", "view": "scatter",
@@ -599,3 +601,76 @@ def test_set_view_setting_reshapes_scatter():
 
     assert n_full > n_capped              # decimation actually reduced the working set
     assert n_capped <= cap * len(units)   # at most the cap per visible unit
+
+
+# --- application-global settings (F2) ----------------------------------------
+
+def test_metadata_includes_main_settings():
+    """Metadata carries the flat global descriptor catalog + current values."""
+    client = _fresh_client(num_units=6)
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "hello"})
+        meta = ws.receive_json()
+    cat = meta["main_settings_catalog"]
+    names = {d["name"] for d in cat}
+    assert "max_visible_units" in names
+    d = next(d for d in cat if d["name"] == "max_visible_units")
+    assert d["type"] == "int" and d["scope"] == "server" and d["limits"] == [1, 50]
+    assert meta["main_settings"]["max_visible_units"] == 10
+
+
+def test_set_main_setting_validates_and_broadcasts():
+    """A global change is clamped, applied to controller.main_settings, and
+    broadcast to every window; an unknown setting is an error, not a broadcast.
+    (max_visible_units also re-applies visibility, so a visible_units broadcast
+    precedes the main_settings one.)"""
+    client = _fresh_client(num_units=6)
+    with client.websocket_connect("/ws") as ws1, client.websocket_connect("/ws") as ws2:
+        ws1.send_json({"type": "hello"})
+        ws1.receive_json()
+        ws2.send_json({"type": "hello"})
+        ws2.receive_json()
+
+        # Above the max (50) -> clamped; BOTH windows get the cleaned value.
+        ws1.send_json({"type": "set_main_setting", "name": "max_visible_units", "value": 999})
+        assert ws1.receive_json()["type"] == "visible_units"  # re-applied visibility
+        m1 = ws1.receive_json()
+        assert m1["type"] == "main_settings"
+        assert m1["settings"]["max_visible_units"] == 50      # clamped to the limit
+        ws2.receive_json()                                    # visible_units push
+        m2 = ws2.receive_json()
+        assert m2["settings"]["max_visible_units"] == 50      # other window mirrors it
+
+        # An unknown setting is rejected with an error and no broadcast.
+        ws1.send_json({"type": "set_main_setting", "name": "nope", "value": 1})
+        assert ws1.receive_json()["type"] == "error"
+
+
+def test_max_visible_units_trims_and_broadcasts():
+    """Lowering max_visible_units below the current visible count trims the visible
+    set (the Controller truncates from the end) and broadcasts BOTH the trimmed
+    visible_units and the new main_settings to every window."""
+    client = _fresh_client(num_units=20)
+    with client.websocket_connect("/ws") as ws1, client.websocket_connect("/ws") as ws2:
+        ws1.send_json({"type": "hello"})
+        meta = ws1.receive_json()
+        ws2.send_json({"type": "hello"})
+        ws2.receive_json()
+
+        # Make 6 units visible (under the default cap of 10, so all 6 stay).
+        six = meta["unit_ids"][:6]
+        ws1.send_json({"type": "set_visible_units", "unit_ids": six})
+        assert ws1.receive_json()["type"] == "visible_units"
+        ws2.receive_json()  # the push to the other window
+
+        # Lower the cap to 3 -> the visible set is trimmed to the first 3.
+        ws1.send_json({"type": "set_main_setting", "name": "max_visible_units", "value": 3})
+        vis1, main1 = ws1.receive_json(), ws1.receive_json()
+        assert vis1["type"] == "visible_units" and len(vis1["unit_ids"]) == 3
+        assert {str(u) for u in vis1["unit_ids"]} == {str(u) for u in six[:3]}  # kept first 3
+        assert main1["type"] == "main_settings" and main1["settings"]["max_visible_units"] == 3
+
+        # The other window mirrors BOTH broadcasts.
+        vis2, main2 = ws2.receive_json(), ws2.receive_json()
+        assert {str(u) for u in vis2["unit_ids"]} == {str(u) for u in six[:3]}
+        assert main2["settings"]["max_visible_units"] == 3

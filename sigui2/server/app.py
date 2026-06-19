@@ -32,6 +32,7 @@ from .schema import (
     ScatterRequest,
     SelectRegion,
     SelectSpikes,
+    SetMainSetting,
     SetViewSetting,
     SetVisibleUnits,
     SpikelistRequest,
@@ -206,6 +207,32 @@ async def _dispatch(ws: WebSocket, session: Session, hub: ClientHub, msg) -> Non
             "type": "view_settings",
             "view": msg.view,
             "settings": session.view_settings[msg.view],
+        })
+
+    elif isinstance(msg, SetMainSetting):
+        # Application-global setting (F2): validate, write it straight into the
+        # Controller (the value owner + enforcer), trigger the Controller's own
+        # reaction, and broadcast both the affected derived state and the new
+        # main_settings to every window.
+        try:
+            value = view_settings.main_validate(msg.name, msg.value)
+        except (KeyError, ValueError) as e:
+            await ws.send_json({"type": "error", "msg": str(e)})
+            return
+        ctrl.main_settings[msg.name] = value
+        if msg.name == "max_visible_units":
+            # Re-apply the current visibility so the Controller's cap trims it to
+            # the new limit (set_visible_unit_ids truncates from the end, matching
+            # upstream mainsettingsview). Raising the cap is a no-op here -- it just
+            # lifts the ceiling for future toggles. Reuse the existing visible_units
+            # message so every window's existing listener adopts the trimmed set.
+            ctrl.set_visible_unit_ids(list(ctrl.get_visible_unit_ids()))
+            ctrl.update_visible_spikes()
+            vis = [protocol._uid(u) for u in ctrl.get_visible_unit_ids()]
+            await hub.broadcast({"type": "visible_units", "unit_ids": vis})
+        await hub.broadcast({
+            "type": "main_settings",
+            "settings": session.main_settings_values(),
         })
 
     elif isinstance(msg, (MergeUnits, UnmergeUnits, DeleteUnits, RestoreUnits,
