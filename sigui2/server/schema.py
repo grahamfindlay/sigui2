@@ -106,6 +106,16 @@ class WaveformRequest(BaseModel):
     unit_ids: list[Any] | None = None
 
 
+class SetViewSetting(BaseModel):
+    type: Literal["set_view_setting"]
+    # The view this setting belongs to (e.g. "scatter"), its descriptor name, and
+    # the new value. The server validates against the view_settings catalog and
+    # echoes the cleaned per-view dict to every window (shared session state).
+    view: str
+    name: str
+    value: Any
+
+
 # --- curation control plane (mutations -> server echoes a "curation" state) ---
 
 
@@ -158,6 +168,7 @@ ControlMessage = Annotated[
         Hello, SetVisibleUnits, TraceViewport, ScatterRequest, SelectSpikes,
         SelectRegion, ClearSelection, TracemapRequest, SpikelistRequest, DensityRequest,
         HeatmapRequest, CorrelogramRequest, IsiRequest, WaveformRequest,
+        SetViewSetting,
         MergeUnits, UnmergeUnits, DeleteUnits, RestoreUnits, LabelUnits,
         SplitUnits, UnsplitUnits, SaveCuration,
     ],

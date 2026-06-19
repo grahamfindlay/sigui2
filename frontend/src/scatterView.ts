@@ -53,6 +53,7 @@ export class ScatterView {
   private fpsTimer?: ReturnType<typeof setInterval>;
   private stressRAF = 0;
   private disposed = false;
+  private pointSize = 1.2; // px radius of each spike dot; a "scatter_size" setting
 
   constructor(
     canvas: HTMLCanvasElement, overlay: HTMLElement, cb: ScatterCallbacks = {},
@@ -100,6 +101,15 @@ export class ScatterView {
   private reportFps() {
     const fps = (this.deck as any).metrics?.fps;
     if (fps) this.cb.onFps?.(fps);
+  }
+
+  // Client-scope "scatter_size" setting (F1): the dot radius is a pure render
+  // parameter, so changing it just repaints the existing working set -- no
+  // re-fetch. A new layer id (via `paint`) makes deck.gl pick up the radius.
+  setPointSize(px: number) {
+    this.pointSize = px;
+    this.version++; // force a fresh ScatterplotLayer so getRadius is re-read
+    if (!this.disposed) this.paint();
   }
 
   // --- lasso ---------------------------------------------------------------
@@ -242,7 +252,7 @@ export class ScatterView {
         getFillColor: { value: this._color, size: 4 },
       } },
       radiusUnits: "pixels",
-      getRadius: 1.2,
+      getRadius: this.pointSize,
       radiusMinPixels: 1,
       stroked: false,
       filled: true,

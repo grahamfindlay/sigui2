@@ -4,7 +4,7 @@
 // sock/meta/visibility from here instead of receiving props from App.
 import { createContext, useContext } from "react";
 import { Sock } from "./socket";
-import { CurationState, Meta, Selection, UnitId } from "./types";
+import { CurationState, Meta, Selection, UnitId, ViewSettingValue } from "./types";
 
 export interface SiguiCtx {
   sock: Sock;
@@ -13,6 +13,11 @@ export interface SiguiCtx {
   setVisibleUnits: (u: UnitId[]) => void;
   curation: CurationState;
   curate: (msg: unknown) => void; // send a curation control message
+  // Per-view settings (F1): current shared values + a setter that rounds the
+  // change through the server (which validates + broadcasts to every window).
+  // The descriptor catalog lives on `meta.view_settings_catalog`.
+  viewSettings: Record<string, Record<string, ViewSettingValue>>;
+  setViewSetting: (view: string, name: string, value: ViewSettingValue) => void;
   // Current scatter region selection (drives the split action + readout).
   selection: Selection | null;
   clearSelection: () => void; // drop the selection everywhere (server + all windows)

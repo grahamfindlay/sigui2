@@ -44,11 +44,19 @@ class Session:
     def __init__(self, analyzer, with_traces: bool = True, verbose: bool = False):
         from spikeinterface_gui.controller import Controller
 
+        from . import view_settings
+
         self.analyzer = analyzer
         self.controller = Controller(
             analyzer, backend="web", with_traces=with_traces, verbose=verbose,
             curation=True,  # enable the manual-curation data model (merges/labels/...)
         )
+
+        # Per-view settings (F1): shared session state, mutated via SetViewSetting
+        # and broadcast to every window. {view: {name: value}}, seeded from the
+        # declarative catalog. The view builders read from here like they read
+        # the shared visibility, so a setting change re-shapes the next frame.
+        self.view_settings = view_settings.defaults()
         # Attach our handler so any future view wiring / curation notify has a
         # target (Controller's "web" branch leaves signal_handler unset).
         self.controller.signal_handler = WebSignalHandler(self.controller)

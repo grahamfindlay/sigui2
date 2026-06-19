@@ -529,3 +529,73 @@ def test_selection_broadcast_region_and_clear():
         c1, c2 = ws1.receive_json(), ws2.receive_json()
         assert c1["kind"] == "clear" and c1["n"] == 0
         assert c2["kind"] == "clear" and c2["n"] == 0
+
+
+# --- per-view settings (F1) --------------------------------------------------
+
+def test_metadata_includes_view_settings():
+    """Metadata carries the descriptor catalog (to render the panel) and the
+    current shared values (which a late-joining window adopts)."""
+    client = _fresh_client(num_units=6)
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "hello"})
+        meta = ws.receive_json()
+    cat = meta["view_settings_catalog"]
+    assert "scatter" in cat
+    names = {d["name"] for d in cat["scatter"]}
+    assert {"scatter_size", "max_spikes_per_unit"} <= names
+    # Each descriptor carries the fields the client renders from.
+    d = next(d for d in cat["scatter"] if d["name"] == "max_spikes_per_unit")
+    assert d["type"] == "int" and d["scope"] == "server" and d["limits"] == [1_000, 1_000_000]
+    vals = meta["view_settings"]["scatter"]
+    assert vals["max_spikes_per_unit"] == 100_000
+
+
+def test_set_view_setting_validates_and_broadcasts():
+    """A setting change is clamped to its limits, stored, and broadcast to every
+    window (shared session); an unknown setting is an error, not a broadcast."""
+    client = _fresh_client(num_units=6)
+    with client.websocket_connect("/ws") as ws1, client.websocket_connect("/ws") as ws2:
+        ws1.send_json({"type": "hello"}); ws1.receive_json()
+        ws2.send_json({"type": "hello"}); ws2.receive_json()
+
+        # Above the max -> clamped, and BOTH windows receive the cleaned dict.
+        ws1.send_json({"type": "set_view_setting", "view": "scatter",
+                       "name": "max_spikes_per_unit", "value": 9_999_999})
+        m1, m2 = ws1.receive_json(), ws2.receive_json()
+        assert m1["type"] == "view_settings" and m1["view"] == "scatter"
+        assert m1["settings"]["max_spikes_per_unit"] == 1_000_000  # clamped to the limit
+        assert m2["settings"]["max_spikes_per_unit"] == 1_000_000  # other window mirrors it
+
+        # An unknown setting is rejected with an error and no broadcast.
+        ws1.send_json({"type": "set_view_setting", "view": "scatter",
+                       "name": "nope", "value": 1})
+        assert ws1.receive_json()["type"] == "error"
+
+
+def test_set_view_setting_reshapes_scatter():
+    """max_spikes_per_unit is a server-scope setting: lowering it re-decimates, so
+    a subsequent scatter fetch returns fewer points (the re-fetch the client does
+    on a server-scope change). 120 s @ 12 Hz => ~1440 spikes/unit, so the cap's
+    valid floor (1000) actually bites."""
+    cap = 1_000
+    client = _fresh_client(num_units=6, duration_s=120.0)
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "hello"})
+        meta = ws.receive_json()
+        units = meta["unit_ids"][:3]
+        ws.send_json({"type": "set_visible_units", "unit_ids": units})
+        assert ws.receive_json()["type"] == "visible_units"
+
+        def scatter_n():
+            ws.send_json({"type": "scatter_request", "view": "amplitude", "unit_ids": units})
+            return decode_frame(ws.receive_bytes())[0]["n"]
+
+        n_full = scatter_n()
+        ws.send_json({"type": "set_view_setting", "view": "scatter",
+                      "name": "max_spikes_per_unit", "value": cap})
+        assert ws.receive_json()["type"] == "view_settings"
+        n_capped = scatter_n()
+
+    assert n_full > n_capped              # decimation actually reduced the working set
+    assert n_capped <= cap * len(units)   # at most the cap per visible unit

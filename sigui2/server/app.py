@@ -15,7 +15,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from pydantic import TypeAdapter, ValidationError
 
-from . import protocol
+from . import protocol, view_settings
 from .schema import (
     ClearSelection,
     ControlMessage,
@@ -32,6 +32,7 @@ from .schema import (
     ScatterRequest,
     SelectRegion,
     SelectSpikes,
+    SetViewSetting,
     SetVisibleUnits,
     SpikelistRequest,
     SplitUnits,
@@ -108,8 +109,11 @@ async def _dispatch(ws: WebSocket, session: Session, hub: ClientHub, msg) -> Non
 
     elif isinstance(msg, ScatterRequest):
         unit_ids = msg.unit_ids or list(ctrl.get_visible_unit_ids())
+        # Read the decimation cap from shared session settings (F1), so a
+        # SetViewSetting change re-shapes the next fetch like a visibility change.
+        max_per_unit = session.view_settings["scatter"]["max_spikes_per_unit"]
         frame = await anyio.to_thread.run_sync(
-            protocol.build_scatter_frame, session, msg.view, unit_ids,
+            protocol.build_scatter_frame, session, msg.view, unit_ids, max_per_unit,
         )
         await ws.send_bytes(frame)
 
@@ -186,6 +190,23 @@ async def _dispatch(ws: WebSocket, session: Session, hub: ClientHub, msg) -> Non
             protocol.build_waveform_frame, session, unit_ids,
         )
         await ws.send_bytes(frame)
+
+    elif isinstance(msg, SetViewSetting):
+        # Shared session state: validate (clamp/coerce) the value, store it, and
+        # broadcast the whole per-view dict to EVERY window so all mirror it. The
+        # client decides how to react (scope="client" re-draws; scope="server"
+        # re-fetches). The client echo-guard keeps this round-trip from looping.
+        try:
+            value = view_settings.validate(msg.view, msg.name, msg.value)
+        except (KeyError, ValueError) as e:
+            await ws.send_json({"type": "error", "msg": str(e)})
+            return
+        session.view_settings[msg.view][msg.name] = value
+        await hub.broadcast({
+            "type": "view_settings",
+            "view": msg.view,
+            "settings": session.view_settings[msg.view],
+        })
 
     elif isinstance(msg, (MergeUnits, UnmergeUnits, DeleteUnits, RestoreUnits,
                           LabelUnits, SplitUnits, UnsplitUnits, SaveCuration)):

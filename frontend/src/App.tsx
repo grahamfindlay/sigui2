@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DockviewReact, DockviewReadyEvent } from "dockview";
 import { Sock } from "./socket";
-import { CurationState, Meta, Selection, SelectionMsg, UnitId } from "./types";
+import { CurationState, Meta, Selection, SelectionMsg, UnitId, ViewSettingValue } from "./types";
 import { SiguiContext } from "./SiguiContext";
 import { panelComponents, buildDefaultLayout } from "./panels";
 
@@ -31,6 +31,8 @@ export function App() {
   const [pickedPoints, setPickedPoints] = useState<[number, number][]>([]);
   const [pickedIndices, setPickedIndices] = useState<number[]>([]);
   const [lassoPolygon, setLassoPolygon] = useState<[number, number][] | null>(null);
+  // Per-view settings (F1): shared session values, keyed {view: {name: value}}.
+  const [viewSettings, setViewSettings] = useState<Record<string, Record<string, ViewSettingValue>>>({});
   const [gpu] = useState(gpuInfo);
   // Key of the visible set we last sent to (or adopted from) the server. The
   // set_visible_units layout effect skips re-sending when it still matches,
@@ -43,6 +45,9 @@ export function App() {
     sock.on("metadata", (m: Meta) => {
       setMeta(m);
       setCuration(m.curation);
+      // Adopt the current shared per-view settings (a late-joining window picks
+      // up whatever the others have set).
+      setViewSettings(m.view_settings ?? {});
       // Adopt the server's live shared visibility so a window opened later on a
       // second monitor inherits the current set instead of overriding it. Seed
       // the guard so this adoption doesn't immediately echo back as a send.
@@ -79,10 +84,24 @@ export function App() {
       lastSentVisible.current = visKey(m.unit_ids);
       setVisibleUnits(m.unit_ids);
     });
+    // A per-view setting changed (this window's own change, re-affirmed, or
+    // another window's). Adopt the authoritative per-view dict. No echo-guard is
+    // needed: nothing re-sends on viewSettings state change (unlike visibility),
+    // so adopting a broadcast can't loop -- only the explicit setter sends.
+    sock.on("view_settings", (m: { view: string; settings: Record<string, ViewSettingValue> }) =>
+      setViewSettings((prev) => ({ ...prev, [m.view]: m.settings })));
     sock.ready.then(() => sock.send({ type: "hello" }));
   }, []);
 
   const curate = (msg: unknown) => sockRef.current?.send(msg);
+  // Change a per-view setting: send it to the server (which validates + echoes
+  // the cleaned per-view dict to every window) and optimistically apply it
+  // locally so the change feels instant. A scope="server" setting's re-fetch is
+  // driven by the resulting viewSettings change in the owning pane.
+  const setViewSetting = (view: string, name: string, value: ViewSettingValue) => {
+    sockRef.current?.send({ type: "set_view_setting", view, name, value });
+    setViewSettings((prev) => ({ ...prev, [view]: { ...(prev[view] ?? {}), [name]: value } }));
+  };
   // Select explicit spikes on the server + drive the scatter pick-highlight by
   // their world coords (so it shows even for non-sampled spikes).
   const pickSpikes = (indices: number[], points: [number, number][]) => {
@@ -132,9 +151,10 @@ export function App() {
     () => (meta && curation && sockRef.current
       ? { sock: sockRef.current, meta, visibleUnits, setVisibleUnits, curation, curate,
           selection, clearSelection, selectionNonce, pickedPoints, pickedIndices, pickSpikes,
-          lassoPolygon }
+          lassoPolygon, viewSettings, setViewSetting }
       : null),
-    [meta, visibleUnits, curation, selection, selectionNonce, pickedPoints, pickedIndices, lassoPolygon],
+    [meta, visibleUnits, curation, selection, selectionNonce, pickedPoints, pickedIndices,
+     lassoPolygon, viewSettings],
   );
 
   if (!ctx || !meta) return <div style={{ padding: 12 }}>connecting…</div>;

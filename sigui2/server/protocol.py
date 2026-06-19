@@ -14,6 +14,7 @@ import math
 
 import numpy as np
 
+from . import view_settings
 from .encode import FrameBuilder
 from .lod import scatter as lod_scatter
 from .lod import traces as lod_traces
@@ -172,6 +173,10 @@ def build_metadata(session: Session) -> dict:
         "unit_positions": unit_positions,
         "probe_contours": probe_contours,
         "channel_order": [int(i) for i in channel_order],
+        # Per-view settings (F1): the descriptor catalog (to render the panels)
+        # and the current shared values (which a late-joining window adopts).
+        "view_settings_catalog": view_settings.catalog(),
+        "view_settings": session.view_settings,
     }
 
 

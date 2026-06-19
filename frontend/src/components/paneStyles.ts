@@ -13,3 +13,11 @@ export const labelStyle: CSSProperties = {
 export const fpsStyle: CSSProperties = {
   position: "absolute", top: 6, right: 10, zIndex: 2, fontSize: 11, color: "#fd7", pointerEvents: "none",
 };
+// Gear button that opens a view's settings popover (F1). Top-right corner; panes
+// that also show an fps readout nudge it left of this (see ScatterPane).
+export const gearStyle: CSSProperties = {
+  position: "absolute", top: 4, right: 6, zIndex: 4,
+  width: 20, height: 20, padding: 0, lineHeight: "18px", textAlign: "center",
+  fontSize: 12, cursor: "pointer",
+  background: "#2a3340", color: "#cde", border: "1px solid #3a4654", borderRadius: 3,
+};

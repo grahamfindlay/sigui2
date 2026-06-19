@@ -51,6 +51,12 @@ rests on a workflow/scientific assumption the user should confirm.
   tab re-inits (re-fetch + re-fit).
 - **Amplitude/contrast gain** on trace/tracemap/waveform; hover +/- keys + corner
   control.
+- **Per-view settings foundation (parity F1)**: declarative server-side descriptor
+  catalog (`server/view_settings.py`) + one reusable gear/popover panel
+  (`components/SettingsPanel.tsx`); `set_view_setting` round-trip with
+  validate/clamp + shared-session broadcast to every window; `scope` decides
+  client-redraw vs server-refetch. Proven on the amplitude scatter (point size +
+  max spikes/unit). Other views get settings by adding catalog entries.
 - **Self-driven UX harness** (`frontend/uxtest/snap.mjs`): drives the running app
   with the system Chrome via `playwright-core` (no bundled-browser download) —
   load, wait, scripted click/drag/keyboard, screenshot, console/error capture,
@@ -60,7 +66,8 @@ rests on a workflow/scientific assumption the user should confirm.
   sign-off. Companion scripts cover the multi-window features headlessly:
   `multiwin.mjs` (visibility broadcast + clamp reconcile), `selsync.mjs` (shared
   lasso highlight/outline + cross-window clear), `picksync.mjs` (shared pick
-  readout), and `snap.mjs tabcycle` (no WebGL-context leak across tab switches).
+  readout), `settings.mjs` (per-view settings panel round-trip + cross-window
+  sync), and `snap.mjs tabcycle` (no WebGL-context leak across tab switches).
 
 ## Next up 🚧
 
@@ -81,12 +88,20 @@ dominate); see the order subsection at the end.
 
 ### Group F — Foundations (build first; unblock the rest)
 
-- **F1 · Per-view settings protocol + reusable panel** `[foundation][enhance]`
-  (L). sigui exposes a pyqtgraph `ParameterTree` per view; sigui2 has none (only
-  gain). Build a declarative per-view settings descriptor server-side
-  (name/type/default/limits) + ONE reusable gear/popover panel; changes
-  round-trip and re-render. Widest dependency — almost every entry below needs it
-  (bins, percentiles, colormaps, caps, modes).
+- **F1 · Per-view settings protocol + reusable panel** ✅ **mechanism shipped**
+  `[foundation][enhance]` (L). sigui exposes a pyqtgraph `ParameterTree` per view;
+  sigui2 had none (only gain). Built: a declarative server-side descriptor
+  catalog (`server/view_settings.py`: `{name,type,value,limits,step,scope}`) +
+  ONE reusable gear/popover panel (`components/SettingsPanel.tsx`). A change
+  round-trips via a `set_view_setting` message; the server validates/clamps,
+  stores it in shared session state, and broadcasts the cleaned per-view dict to
+  every window (no echo-guard needed — nothing re-sends on adopt). The descriptor
+  `scope` drives the reaction: `client` re-draws, `server` re-fetches. Proven on
+  the amplitude scatter (`scatter_size` client redraw + `max_spikes_per_unit`
+  server re-fetch). **Remaining (later phases):** populate the other views'
+  settings — each is now just more catalog entries, no plumbing. Widest
+  dependency — almost every entry below needs it (bins, percentiles, colormaps,
+  caps, modes).
 - **F2 · Global settings** `[foundation][parity]` (M): `max_visible_units`
   (replaces today's hardcoded ~10 cap), `color_mode` (by_unit / only_visible /
   by_visibility), `use_times` (real recording times vs samples — valuable for

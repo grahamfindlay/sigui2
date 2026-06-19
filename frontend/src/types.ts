@@ -1,5 +1,23 @@
 export type UnitId = string | number;
 
+// A per-view setting value + its declarative descriptor (F1). The server owns
+// the catalog (server/view_settings.py); the client renders one control per
+// descriptor and rounds changes back via a set_view_setting message.
+export type ViewSettingValue = number | boolean | string;
+
+export interface ViewSettingDescriptor {
+  name: string;
+  label?: string;
+  type: "bool" | "int" | "float" | "list";
+  value: ViewSettingValue; // default
+  // (min,max) for int/float; the allowed choices for "list"; null when absent.
+  limits?: (number | string)[] | null;
+  step?: number;
+  // "client" -> a change only re-draws the existing frame; "server" -> it
+  // re-shapes server-computed data, so the view must re-fetch.
+  scope: "client" | "server";
+}
+
 export interface Meta {
   num_units: number;
   num_channels: number;
@@ -23,6 +41,10 @@ export interface Meta {
   unit_positions: Record<string, [number, number]>; // unit id -> (x, y) on the probe
   probe_contours: [number, number][][]; // each probe's planar outline
   channel_order: number[]; // depth-ordered channel indices (tracemap rows)
+  // Per-view settings (F1): the descriptor catalog (render the panels) + the
+  // current shared values a late-joining window adopts on connect.
+  view_settings_catalog: Record<string, ViewSettingDescriptor[]>;
+  view_settings: Record<string, Record<string, ViewSettingValue>>;
 }
 
 // One row of the spikelist window (server JSON, not a binary frame).

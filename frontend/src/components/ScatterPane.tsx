@@ -5,6 +5,7 @@ import { ScatterView } from "../scatterView";
 import { CachedUnitView } from "../unitCache";
 import { DecodedFrame } from "../frame";
 import { useSigui } from "../SiguiContext";
+import { ViewSettings } from "./SettingsPanel";
 import { labelStyle, fpsStyle, paneStyle, canvasStyle } from "./paneStyles";
 
 // One unit's contribution to the scatter, sliced (zero-copy) out of a delta
@@ -41,10 +42,11 @@ export function ScatterPane(
   const cvRef = useRef<CachedUnitView<ScatterUnit> | null>(null);
   const visRef = useRef<UnitId[]>(visibleUnits);
   visRef.current = visibleUnits;
+  const maxSpikesRef = useRef<number | undefined>(undefined);
   const [fps, setFps] = useState(0);
   const [lasso, setLasso] = useState(false);
   const [localSel, setLocalSel] = useState(0);
-  const { selection, selectionNonce, clearSelection, pickedPoints, pickedIndices, pickSpikes, lassoPolygon } = useSigui();
+  const { selection, selectionNonce, clearSelection, pickedPoints, pickedIndices, pickSpikes, lassoPolygon, viewSettings } = useSigui();
 
   useEffect(() => {
     const view = new ScatterView(canvasRef.current!, overlayRef.current!, {
@@ -117,6 +119,29 @@ export function ScatterPane(
     viewRef.current?.showLasso(lassoPolygon);
   }, [lassoPolygon]);
 
+  // Client-scope setting: point size only repaints the existing working set.
+  // Runs on mount too, so a window opened late adopts the current shared size.
+  useEffect(() => {
+    const px = viewSettings.scatter?.scatter_size;
+    if (typeof px === "number") viewRef.current?.setPointSize(px);
+  }, [viewSettings.scatter?.scatter_size]);
+
+  // Server-scope setting: max spikes/unit changes the server-side decimation, so
+  // drop the per-unit cache and re-fetch the visible units. Skip the initial
+  // value (the first fetch already used the server's current cap); only react to
+  // an actual change, here or in another window.
+  useEffect(() => {
+    if (stress > 0) return;
+    const cap = viewSettings.scatter?.max_spikes_per_unit;
+    if (typeof cap !== "number") return;
+    if (maxSpikesRef.current !== undefined && maxSpikesRef.current !== cap) {
+      cvRef.current?.invalidateAll();
+      cvRef.current?.setVisible(visRef.current);
+    }
+    maxSpikesRef.current = cap;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewSettings.scatter?.max_spikes_per_unit]);
+
   const toggleLasso = () => {
     const next = !lasso;
     setLasso(next);
@@ -142,7 +167,9 @@ export function ScatterPane(
   return (
     <div style={paneStyle}>
       <div style={labelStyle}>{label}</div>
-      <div style={fpsStyle}>{fps ? `${fps.toFixed(0)} fps` : ""}</div>
+      {/* fps sits left of the settings gear (top-right) so they don't overlap. */}
+      <div style={{ ...fpsStyle, right: 32 }}>{fps ? `${fps.toFixed(0)} fps` : ""}</div>
+      {stress <= 0 && <ViewSettings view="scatter" />}
       <canvas ref={canvasRef} style={canvasStyle} />
       {/* Lasso capture layer: pointer-events toggled on only in lasso mode (see
           ScatterView.setLassoMode) so deck owns pan/zoom otherwise. */}
