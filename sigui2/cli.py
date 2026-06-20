@@ -17,6 +17,9 @@ def main(argv: list[str] | None = None) -> None:
                         help="SortingAnalyzer folder/zarr path")
     parser.add_argument("--synthetic", action="store_true",
                         help="Use a cached synthetic analyzer (no NFS needed)")
+    parser.add_argument("--synthetic-segments", type=int, default=1,
+                        help="Number of segments in the synthetic analyzer "
+                             "(>1 exercises F3 segment navigation)")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--no-traces", action="store_true")
@@ -26,7 +29,12 @@ def main(argv: list[str] | None = None) -> None:
     if args.synthetic or args.analyzer is None:
         from .testing import cached_synthetic_analyzer
         print("Loading synthetic analyzer (cached)...")
-        analyzer = cached_synthetic_analyzer()
+        kwargs = {}
+        if args.synthetic_segments > 1:
+            # Short segments keep the build/cache cheap; enough to drive the
+            # segment dropdown + per-segment seek.
+            kwargs["durations"] = [20.0] * args.synthetic_segments
+        analyzer = cached_synthetic_analyzer(**kwargs)
     else:
         from spikeinterface import load_sorting_analyzer
         print(f"Loading analyzer: {args.analyzer}")

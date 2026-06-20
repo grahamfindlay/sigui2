@@ -125,6 +125,17 @@ class SetMainSetting(BaseModel):
     value: Any
 
 
+class SetTimeWindow(BaseModel):
+    type: Literal["set_time_window"]
+    # The shared segment-navigation + time-seek state (F3): which segment and what
+    # [t0, t1] second window the trace/tracemap views show. The server clamps to
+    # the segment's [0, duration] and echoes a "time_window" broadcast to every
+    # window (shared session). seg/t0/t1 are sample-derived seconds (not F2c times).
+    seg: int = 0
+    t0: float
+    t1: float
+
+
 # --- curation control plane (mutations -> server echoes a "curation" state) ---
 
 
@@ -177,7 +188,7 @@ ControlMessage = Annotated[
         Hello, SetVisibleUnits, TraceViewport, ScatterRequest, SelectSpikes,
         SelectRegion, ClearSelection, TracemapRequest, SpikelistRequest, DensityRequest,
         HeatmapRequest, CorrelogramRequest, IsiRequest, WaveformRequest,
-        SetViewSetting, SetMainSetting,
+        SetViewSetting, SetMainSetting, SetTimeWindow,
         MergeUnits, UnmergeUnits, DeleteUnits, RestoreUnits, LabelUnits,
         SplitUnits, UnsplitUnits, SaveCuration,
     ],

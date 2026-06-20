@@ -98,6 +98,29 @@ rests on a workflow/scientific assumption the user should confirm.
   quality option-set (driven from `label_definitions`, not hardcoded). Pure
   frontend — rides the existing curation broadcast, so changes sync across
   windows. Browser-safe per the F4 policy (`e` for merge since bare `m` is MUA).
+- **Segment navigation + time-seek (parity F3)**: a shared, session-wide
+  `{seg, t0, t1}` time window — broadcast to every browser window like
+  visibility/selection — surfaced as a top-bar `TimeNav` control (segment
+  dropdown shown only when `num_segments>1`, a time scrollbar, a "go to time"
+  box, and a `t0–t1 / segDur` readout) that drives the **trace +
+  tracemap** views. The scrollbar seeks on *release* (commit on the native
+  `change` event, not per drag-step `input`, so the trace jumps straight to the
+  target instead of crawling); the "go to time" box jumps on Enter and its ↑/↓
+  arrows page forward/back by exactly one window. The data plane was already segment-aware (`trace_viewport`/
+  `tracemap_request` carry `seg`); F3 adds the missing pieces: `num_segments` +
+  per-segment `seg_durations` + the current `time_window` in the metadata
+  handshake, a `set_time_window` control message the server clamps (seg into
+  range, t0/t1 into that segment's `[0, duration]`) and re-broadcasts as
+  `time_window`, and a shared `timeWindow` in `SiguiContext`. **Two-way bound:**
+  the toolbar writes the window AND each view's own deck.gl pan/zoom writes it
+  back, so the scrollbar handle, the tracemap, and other windows all track a
+  mouse drag. Reuses the visibility echo-guard pattern (a `lastSentWindow` key,
+  pre-seeded on every inbound broadcast) plus a per-view self-echo skip (a view
+  ignores the server's echo of the window it already shows, so an active drag is
+  never fought) — so the round-trip converges in one hop with no oscillation.
+  Switching segment refits the trace/tracemap to the new segment; a seek
+  preserves the current window WIDTH (an explicit window-size box is **T1**).
+  Stays sample-derived seconds (`sample/fs`), not the F2c real-time API.
 - **Self-driven UX harness** (`frontend/uxtest/snap.mjs`): drives the running app
   with the system Chrome via `playwright-core` (no bundled-browser download) —
   load, wait, scripted click/drag/keyboard, screenshot, console/error capture,
@@ -112,8 +135,11 @@ rests on a workflow/scientific assumption the user should confirm.
   visible set + syncs across windows), `keybindings.mjs` (F4 dispatcher: gain
   keys context-scoped to the hovered pane + Space/Alt-arrow unit nav, synced
   across windows), `curationkeys.mjs` (C2/C3 hotkeys: d/e/r/u merge·delete·
-  restore·unmerge + c/g/m labels, units-pane-scoped, synced across windows), and
-  `snap.mjs tabcycle` (no WebGL-context leak across tab switches).
+  restore·unmerge + c/g/m labels, units-pane-scoped, synced across windows),
+  `segtime.mjs` (F3 segment nav + time-seek: dropdown presence by num_segments,
+  scrollbar/segment-switch seeks the trace, window B follows, tracemap follows;
+  run against `--synthetic-segments 3`), and `snap.mjs tabcycle` (no
+  WebGL-context leak across tab switches).
 
 ## Next up 🚧
 
@@ -166,10 +192,17 @@ dominate); see the order subsection at the end.
     conversion cost on a real long recording before claiming it's free. Both ride
     the shipped MainSettings panel — each is "add a descriptor + its server
     reaction."
-- **F3 · Segment navigation + time-seek** `[foundation][parity]` (M). sigui2's
-  `trace_viewport` has a `seg` arg but no UI; sigui has segment dropdown + time
-  slider + scrollbar. Shared segment+time control. Unblocks trace depth,
-  spike-rate, event.
+- **F3 · Segment navigation + time-seek** ✅ **shipped** `[foundation][parity]`
+  (M). A shared session-wide `{seg,t0,t1}` window, broadcast to every window like
+  visibility, surfaced as a top-bar `TimeNav` (segment dropdown when
+  `num_segments>1` + time scrollbar + window-start box + readout) driving the
+  trace + tracemap views. Two-way bound (toolbar AND each view's pan/zoom write
+  the window; reuses the visibility echo-guard + a per-view self-echo skip so an
+  active drag is never fought). Server clamps `set_time_window` to the segment's
+  `[0,duration]`; metadata now carries `num_segments`/`seg_durations`/
+  `time_window`. A seek preserves the current window WIDTH — the explicit
+  window-size box (T1) and the slider/scrollbar/auto-scale polish (T3) now just
+  ride this shared window. Still unblocks S4 (spike-rate) + S6 (event).
 - **F4 · Keybinding dispatcher** ✅ **dispatcher + gain migration shipped**
   `[foundation][enhance]` (M). One context-aware dispatcher
   (`frontend/src/keybindings.ts`) replaced the scattered `window` listeners: a
@@ -286,9 +319,10 @@ dominate); see the order subsection at the end.
 
 ### Suggested implementation order (foundations-first)
 
-- **Phase A — Foundations:** F1 → F2 → F4 → F3. Settings first (widest
-  dependency); global settings ride it and kill the hardcoded cap; keybindings
-  and segment-nav each unblock a whole group.
+- **Phase A — Foundations:** F1 → F2 → F4 → F3 — ✅ **all shipped**. Settings
+  first (widest dependency); global settings rode it and killed the hardcoded
+  cap; keybindings and segment-nav each unblock a whole group. Phase B is now
+  unblocked.
 - **Phase B — High-reuse, high-payoff:** S1+S2 (one scatter generalization →
   three views), W7 cross-correlograms + W6 similarity click-select (the
   merge-decision toolkit), C1 (curation review view; C2+C3 hotkeys already

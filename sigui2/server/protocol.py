@@ -115,6 +115,11 @@ def build_metadata(session: Session) -> dict:
     fs = session.sampling_frequency
     seg = 0
     n_samples = ctrl.get_num_samples(seg)
+    # Segment navigation (F3): per-segment sample counts -> durations, so the
+    # client can populate the segment dropdown + size the time scrollbar. Cheap
+    # (just sample-count lookups); kept sample-derived (NOT the F2c time API).
+    num_segments = int(ctrl.num_segments)
+    seg_durations = [ctrl.get_num_samples(s) / fs for s in range(num_segments)]
     unit_ids = [int(u) if isinstance(u, np.integer) else u for u in ctrl.unit_ids]
 
     colors = {}
@@ -155,6 +160,13 @@ def build_metadata(session: Session) -> dict:
         "sampling_frequency": float(fs),
         "duration_s": float(n_samples / fs),
         "num_samples": int(n_samples),
+        # Segment navigation + time-seek (F3). duration_s/num_samples stay seg-0
+        # for back-compat; seg_durations is the authoritative per-segment list.
+        "num_segments": num_segments,
+        "seg_durations": [float(d) for d in seg_durations],
+        # Current shared time window, so a late-joining window adopts it on connect
+        # (mirrors default_visible_units).
+        "time_window": session.time_window,
         "unit_ids": unit_ids,
         "unit_colors": colors,
         # The live shared-session visibility (not a static default), so every

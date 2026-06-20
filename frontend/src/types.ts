@@ -5,6 +5,15 @@ export type UnitId = string | number;
 // descriptor and rounds changes back via a set_view_setting message.
 export type ViewSettingValue = number | boolean | string;
 
+// Shared segment + time-seek state (F3): the segment index and [t0, t1] second
+// window the trace/tracemap views show. Broadcast to every window like
+// visibility; mutated via a set_time_window message. Sample-derived seconds.
+export interface TimeWindow {
+  seg: number;
+  t0: number;
+  t1: number;
+}
+
 export interface ViewSettingDescriptor {
   name: string;
   label?: string;
@@ -24,6 +33,12 @@ export interface Meta {
   sampling_frequency: number;
   duration_s: number;
   num_samples: number;
+  // Segment navigation + time-seek (F3). duration_s/num_samples are seg-0;
+  // seg_durations is the authoritative per-segment length list. time_window is
+  // the current shared window a late-joining window adopts on connect.
+  num_segments: number;
+  seg_durations: number[];
+  time_window: TimeWindow;
   unit_ids: UnitId[];
   unit_colors: Record<string, [number, number, number, number]>;
   default_visible_units: UnitId[];

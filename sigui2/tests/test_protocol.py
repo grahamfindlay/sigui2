@@ -674,3 +674,75 @@ def test_max_visible_units_trims_and_broadcasts():
         vis2, main2 = ws2.receive_json(), ws2.receive_json()
         assert {str(u) for u in vis2["unit_ids"]} == {str(u) for u in six[:3]}
         assert main2["settings"]["max_visible_units"] == 3
+
+
+# --- segment navigation + time-seek (F3) -------------------------------------
+
+def test_metadata_includes_segment_info(client):
+    """Metadata carries num_segments, per-segment durations, and the current
+    shared time window a late-joining window adopts. (Single-segment fixture.)"""
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "hello"})
+        meta = ws.receive_json()
+    assert meta["num_segments"] == 1
+    assert len(meta["seg_durations"]) == 1
+    assert abs(meta["seg_durations"][0] - meta["duration_s"]) < 1e-6
+    tw = meta["time_window"]
+    assert tw["seg"] == 0 and tw["t0"] == 0.0 and 0 < tw["t1"] <= meta["duration_s"]
+
+
+def test_set_time_window_clamps_and_broadcasts():
+    """SetTimeWindow clamps seg + [t0,t1] into the segment's [0,duration] and
+    broadcasts the authoritative window to BOTH windows (shared session)."""
+    client = _fresh_client(num_units=6, duration_s=10.0)
+    with client.websocket_connect("/ws") as ws1, client.websocket_connect("/ws") as ws2:
+        ws1.send_json({"type": "hello"})
+        meta = ws1.receive_json()
+        ws2.send_json({"type": "hello"})
+        ws2.receive_json()
+        dur = meta["duration_s"]
+
+        # A valid in-range window round-trips unchanged to BOTH windows.
+        ws1.send_json({"type": "set_time_window", "seg": 0, "t0": 2.0, "t1": 4.0})
+        w1, w2 = ws1.receive_json(), ws2.receive_json()
+        assert w1["type"] == "time_window" and w2["type"] == "time_window"
+        assert w1 == {"type": "time_window", "seg": 0, "t0": 2.0, "t1": 4.0}
+        assert w2 == w1
+
+        # seg out of range -> clamped to 0; t1 past the end -> clamped to duration.
+        ws1.send_json({"type": "set_time_window", "seg": 9, "t0": 1.0, "t1": dur + 100})
+        w = ws1.receive_json()
+        ws2.receive_json()
+        assert w["seg"] == 0 and w["t0"] == 1.0 and abs(w["t1"] - dur) < 1e-6
+
+
+def test_multi_segment_metadata_and_seek():
+    """A 3-segment analyzer reports num_segments=3 with per-segment durations, and
+    SetTimeWindow clamps to the *selected* segment's duration."""
+    from starlette.testclient import TestClient
+
+    from sigui2.testing import make_synthetic_analyzer
+
+    analyzer = make_synthetic_analyzer(
+        num_units=6, num_channels=16, durations=[5.0, 7.0, 3.0], firing_rate=12.0
+    )
+    client = TestClient(create_app(Session(analyzer)))
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "hello"})
+        meta = ws.receive_json()
+        assert meta["num_segments"] == 3
+        assert len(meta["seg_durations"]) == 3
+        assert abs(meta["seg_durations"][1] - 7.0) < 1e-3
+        assert abs(meta["seg_durations"][2] - 3.0) < 1e-3
+
+        # Seek into segment 2 (duration ~3 s): a 100 s t1 clamps to that segment.
+        ws.send_json({"type": "set_time_window", "seg": 2, "t0": 1.0, "t1": 100.0})
+        w = ws.receive_json()
+        assert w["seg"] == 2 and w["t0"] == 1.0
+        assert abs(w["t1"] - meta["seg_durations"][2]) < 1e-3
+
+        # A trace request for segment 2 returns a frame tagged with that segment.
+        ws.send_json({"type": "trace_viewport", "t0": 0.0, "t1": 1.0,
+                      "width_px": 200, "seg": 2})
+        header, _ = decode_frame(ws.receive_bytes())
+        assert header["type"] == "trace_frame" and header["seg"] == 2

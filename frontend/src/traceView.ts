@@ -7,6 +7,12 @@ import { Sock } from "./socket";
 import { DecodedFrame } from "./frame";
 import { attachGainKeys, clampGain } from "./gainControl";
 
+// Quantized key for a {seg,t0,t1} window, matching App.tsx winKey -- lets the
+// view recognize the server's echo of its own pan as the window it already shows
+// and skip re-seeking (so two-way binding never suppresses an active drag).
+const winKey = (seg: number, t0: number, t1: number) =>
+  `${seg}:${t0.toFixed(4)}:${t1.toFixed(4)}`;
+
 export class TraceView {
   private deck: Deck;
   private sock: Sock;
@@ -16,6 +22,22 @@ export class TraceView {
   private fitted = false;
   private onFps?: (n: number) => void;
   private onGain?: (g: number) => void;
+  // F3 segment + time-seek: the segment this view fetches, the shared-window
+  // write-back callback (the view's own pan/zoom drives the shared window), the
+  // per-segment durations (for the segment-change refit + onView clamp), and the
+  // key of the window this view currently shows (self-echo skip).
+  private seg = 0;
+  private onWindow?: (seg: number, t0: number, t1: number) => void;
+  private segDurations: number[];
+  private lastWindowKey: string | null = null;
+  // While true, programmatic viewport moves (seek) don't re-emit a write-back;
+  // cleared on the next tick. Correctness is also guaranteed by the App-side
+  // echo-guard, so this only trims a redundant fetch.
+  private applyingExternal = false;
+  // Vertical viewport state (target y + y-zoom), preserved across a horizontal
+  // seek so a time jump never resets the channel pan/zoom.
+  private lastTargetY = 0;
+  private lastZoomY = 0;
   private canvas: HTMLCanvasElement;
   private ampGain = 1;
   private lastFrame: DecodedFrame | null = null;
@@ -26,11 +48,15 @@ export class TraceView {
   constructor(
     canvas: HTMLCanvasElement, sock: Sock, paneId: string,
     onFps?: (n: number) => void, onGain?: (g: number) => void,
+    onWindow?: (seg: number, t0: number, t1: number) => void,
+    segDurations?: number[],
   ) {
     this.sock = sock;
     this.canvas = canvas;
     this.onFps = onFps;
     this.onGain = onGain;
+    this.onWindow = onWindow;
+    this.segDurations = segDurations ?? [];
     this.detachGain = attachGainKeys(paneId, (f) => this.bumpGain(f));
     this.deck = new Deck({
       canvas,
@@ -65,9 +91,35 @@ export class TraceView {
   private w() { return Math.max(200, this.canvas.clientWidth || 800); }
   private h() { return Math.max(100, this.canvas.clientHeight || 300); }
 
-  async init(durationS: number) {
-    this.durationS = durationS;
-    await this.request(0, Math.min(2, durationS));
+  // Drive the view to the shared {seg,t0,t1} window (F3). Called on mount and on
+  // every shared-window change. Skips its own echo (the window it already shows),
+  // so an active drag is never fought. On a segment change it refits to the new
+  // segment; otherwise it repositions the deck viewport horizontally (preserving
+  // the vertical channel pan/zoom) and refetches.
+  seek(seg: number, t0: number, t1: number) {
+    const k = winKey(seg, t0, t1);
+    if (this.fitted && k === this.lastWindowKey) return; // our own move, echoed back
+    const segChanged = seg !== this.seg;
+    this.seg = seg;
+    this.durationS = this.segDurations[seg] ?? this.durationS;
+    this.lastWindowKey = k;
+    this.applyingExternal = true;
+    if (segChanged) {
+      this.fitted = false; // force a clean refit to the new segment's frame
+    } else if (this.fitted) {
+      const cx = (t0 + t1) / 2;
+      const spanX = Math.max(1e-6, t1 - t0);
+      this.deck.setProps({
+        initialViewState: {
+          target: [cx, this.lastTargetY, 0],
+          zoom: [Math.log2(this.w() / spanX), this.lastZoomY],
+        },
+      } as any);
+    }
+    // Clear on the next tick (the deck viewState change fires onViewStateChange
+    // asynchronously); the App echo-guard backstops correctness regardless.
+    setTimeout(() => { this.applyingExternal = false; }, 0);
+    this.request(t0, t1);
   }
 
   bumpGain(factor: number) {
@@ -77,6 +129,11 @@ export class TraceView {
   }
 
   private onView(viewState: any) {
+    // Always track the vertical viewport so a later horizontal seek preserves it.
+    this.lastTargetY = viewState.target[1];
+    const zy = viewState.zoom;
+    this.lastZoomY = Array.isArray(zy) ? zy[1] : 0;
+    if (this.applyingExternal) return; // a programmatic seek -> don't echo it back
     const zx = Array.isArray(viewState.zoom) ? viewState.zoom[0] : viewState.zoom;
     const visW = this.w() / Math.pow(2, zx);
     const cx = viewState.target[0];
@@ -85,14 +142,18 @@ export class TraceView {
     const now = performance.now();
     if (now - this.lastReq > 120 && !this.reqPending && t1 > t0) {
       this.lastReq = now;
+      this.lastWindowKey = winKey(this.seg, t0, t1);
       this.request(t0, t1);
+      // Write this pan/zoom back into the shared window so the toolbar handle,
+      // the tracemap, and other windows track it (two-way binding).
+      this.onWindow?.(this.seg, t0, t1);
     }
   }
 
   private async request(t0: number, t1: number) {
     this.reqPending = true;
     const frame = await this.sock.requestFrame(
-      { type: "trace_viewport", t0, t1, width_px: this.w() },
+      { type: "trace_viewport", t0, t1, width_px: this.w(), seg: this.seg },
       "trace_frame",
     );
     this.reqPending = false;
@@ -102,6 +163,10 @@ export class TraceView {
   private draw(frame: DecodedFrame) {
     if (this.disposed) return; // a frame can land after the tab was hidden
     this.lastFrame = frame;
+    // Test hook (F3 harness reads the last frame's segment + window).
+    (globalThis as any).__siguiLastTrace = {
+      seg: frame.header.seg, t0: frame.header.t0, t1: frame.header.t1,
+    };
     const { header, buffers } = frame;
     const n = header.n_points as number;
     const chans = header.channel_inds as number[];
@@ -181,9 +246,12 @@ export class TraceView {
     const props: any = { layers: [layer] };
     if (!this.fitted) {
       const spanX = Math.max(1e-6, t1 - t0);
+      // Record the vertical fit so a horizontal seek can preserve it.
+      this.lastTargetY = (nChan - 1) / 2;
+      this.lastZoomY = Math.log2(this.h() / (nChan + 1));
       props.initialViewState = {
-        target: [(t0 + t1) / 2, (nChan - 1) / 2, 0],
-        zoom: [Math.log2(this.w() / spanX), Math.log2(this.h() / (nChan + 1))],
+        target: [(t0 + t1) / 2, this.lastTargetY, 0],
+        zoom: [Math.log2(this.w() / spanX), this.lastZoomY],
       };
       this.fitted = true;
     }

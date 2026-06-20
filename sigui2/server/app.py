@@ -33,6 +33,7 @@ from .schema import (
     SelectRegion,
     SelectSpikes,
     SetMainSetting,
+    SetTimeWindow,
     SetViewSetting,
     SetVisibleUnits,
     SpikelistRequest,
@@ -234,6 +235,22 @@ async def _dispatch(ws: WebSocket, session: Session, hub: ClientHub, msg) -> Non
             "type": "main_settings",
             "settings": session.main_settings_values(),
         })
+
+    elif isinstance(msg, SetTimeWindow):
+        # Shared segment + time window (F3). Clamp seg into range and t0/t1 into
+        # that segment's [0, duration] (mirroring build_trace_frame's own clamp),
+        # then broadcast the authoritative window to EVERY window (incl. sender)
+        # so trace/tracemap + other monitors seek there. The client echo-guard
+        # (lastSentWindow) keeps this single round-trip from looping.
+        nseg = int(ctrl.num_segments)
+        seg = max(0, min(int(msg.seg), nseg - 1))
+        dur = session.segment_duration(seg)
+        t0 = max(0.0, min(float(msg.t0), dur))
+        t1 = max(t0, min(float(msg.t1), dur))
+        if t1 <= t0:  # degenerate -> a one-sample window at t0
+            t1 = min(dur, t0 + 1.0 / session.sampling_frequency)
+        session.time_window = {"seg": seg, "t0": t0, "t1": t1}
+        await hub.broadcast({"type": "time_window", **session.time_window})
 
     elif isinstance(msg, (MergeUnits, UnmergeUnits, DeleteUnits, RestoreUnits,
                           LabelUnits, SplitUnits, UnsplitUnits, SaveCuration)):

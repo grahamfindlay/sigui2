@@ -8,8 +8,6 @@ analyzer).
 
 from __future__ import annotations
 
-import numpy as np
-
 
 # Extensions the sigui2 views consume. Kept in dependency order so a single
 # ``analyzer.compute(...)`` call resolves cleanly.
@@ -35,11 +33,15 @@ def make_synthetic_analyzer(
     firing_rate: float = 8.0,
     seed: int = 42,
     extensions: list[str] | None = None,
+    durations: list[float] | None = None,
 ):
     """Build an in-memory ``SortingAnalyzer`` with the extensions sigui2 needs.
 
     Parameters mirror the knobs that matter for bandwidth/perf work: more units,
-    channels, and duration push the scatter/trace data sizes up.
+    channels, and duration push the scatter/trace data sizes up. Pass ``durations``
+    (a list of per-segment lengths in seconds) for a MULTI-segment recording --
+    used to exercise F3 segment navigation; defaults to a single ``duration_s``
+    segment.
     """
     from spikeinterface.core import (
         create_sorting_analyzer,
@@ -47,7 +49,7 @@ def make_synthetic_analyzer(
     )
 
     recording, sorting = generate_ground_truth_recording(
-        durations=[duration_s],
+        durations=durations if durations is not None else [duration_s],
         sampling_frequency=sampling_frequency,
         num_channels=num_channels,
         num_units=num_units,
@@ -75,7 +77,10 @@ def cached_synthetic_analyzer(cache_dir=None, rebuild: bool = False, **kwargs):
     from spikeinterface import load_sorting_analyzer
 
     cache_dir = Path(cache_dir) if cache_dir else (Path.home() / ".cache" / "sigui2")
-    folder = cache_dir / "synthetic.zarr"
+    # Key the cache by segment layout so single- and multi-segment builds (F3
+    # segment-nav testing) don't collide on disk.
+    nseg = len(kwargs["durations"]) if kwargs.get("durations") else 1
+    folder = cache_dir / (f"synthetic_{nseg}seg.zarr" if nseg > 1 else "synthetic.zarr")
     if folder.exists() and not rebuild:
         return load_sorting_analyzer(folder)
     if folder.exists():

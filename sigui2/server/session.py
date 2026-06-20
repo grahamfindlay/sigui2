@@ -79,7 +79,19 @@ class Session:
         self.controller.set_visible_unit_ids(ids[: min(8, cap, len(ids))])
         self.controller.update_visible_spikes()
 
+        # Shared time window (F3): {seg, t0, t1} in seconds, mirrored to every
+        # window like visibility/settings and mutated via SetTimeWindow. Seeded to
+        # segment 0 start (matching the client's first ~2 s fetch); the first
+        # window's deck-fit then writes the real window, which broadcasts to peers.
+        dur0 = self.controller.get_num_samples(0) / self.sampling_frequency
+        self.time_window = {"seg": 0, "t0": 0.0, "t1": float(min(2.0, dur0))}
+
     # --- convenience accessors used by the LOD layer / views -----------------
+
+    def segment_duration(self, seg: int) -> float:
+        """Duration (seconds) of segment ``seg``, sample-derived (not the F2c
+        time API). Used to clamp the shared time window in the dispatch handler."""
+        return self.controller.get_num_samples(seg) / self.sampling_frequency
 
     def main_settings_values(self) -> dict:
         """Current values of the F2-managed application-global settings.

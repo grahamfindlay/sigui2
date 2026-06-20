@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DockviewReact, DockviewReadyEvent } from "dockview";
 import { Sock } from "./socket";
-import { CurationState, Meta, Selection, SelectionMsg, UnitId, ViewSettingValue } from "./types";
+import { CurationState, Meta, Selection, SelectionMsg, TimeWindow, UnitId, ViewSettingValue } from "./types";
 import { SiguiContext } from "./SiguiContext";
 import { panelComponents, buildDefaultLayout } from "./panels";
 import { MainSettings } from "./components/SettingsPanel";
+import { TimeNav } from "./components/TimeNav";
 
 // Report the actual WebGL renderer. "SwiftShader"/"llvmpipe" means software
 // rendering (e.g. a remote desktop on a headless host) -- fps would be bogus.
@@ -22,6 +23,12 @@ function gpuInfo(): string {
 // returning the same set in a different order -- never looks like a change.
 const visKey = (u: UnitId[]) => u.map(String).sort().join(",");
 
+// Quantized key for the shared time window (F3). Rounded so float jitter on the
+// server round-trip never reads as a change (the time-window analogue of visKey),
+// which is what lets the same window the view already shows be recognized as an
+// echo and dropped instead of bouncing back into the broadcast loop.
+const winKey = (w: TimeWindow) => `${w.seg}:${w.t0.toFixed(4)}:${w.t1.toFixed(4)}`;
+
 export function App() {
   const sockRef = useRef<Sock | null>(null);
   const [meta, setMeta] = useState<Meta | null>(null);
@@ -36,11 +43,19 @@ export function App() {
   const [viewSettings, setViewSettings] = useState<Record<string, Record<string, ViewSettingValue>>>({});
   // Application-global settings (F2): shared session values, keyed {name: value}.
   const [mainSettings, setMainSettings] = useState<Record<string, ViewSettingValue>>({});
+  // Shared segment + time window (F3): the {seg,t0,t1} every trace/tracemap view
+  // shows, broadcast to every window. Pre-`metadata` it's a placeholder.
+  const [timeWindow, setTimeWindow] = useState<TimeWindow>({ seg: 0, t0: 0, t1: 2 });
   const [gpu] = useState(gpuInfo);
   // Key of the visible set we last sent to (or adopted from) the server. The
   // set_visible_units layout effect skips re-sending when it still matches,
   // which dedupes redundant sends and breaks the multi-window echo loop.
   const lastSentVisible = useRef<string | null>(null);
+  // Key of the time window we last sent to (or adopted from) the server. Both
+  // the toolbar control and the views' pan/zoom write-back funnel through
+  // emitTimeWindow, which skips when the key still matches -- so a window never
+  // re-emits its own broadcast (the time-window analogue of lastSentVisible).
+  const lastSentWindow = useRef<string | null>(null);
 
   useEffect(() => {
     const sock = new Sock(`ws://${location.host}/ws`);
@@ -57,6 +72,10 @@ export function App() {
       // the guard so this adoption doesn't immediately echo back as a send.
       lastSentVisible.current = visKey(m.default_visible_units);
       setVisibleUnits(m.default_visible_units);
+      // Adopt the shared time window (a late joiner inherits the current seek
+      // instead of resetting it). Pre-seed the guard so adopting it isn't echoed.
+      lastSentWindow.current = winKey(m.time_window);
+      setTimeWindow(m.time_window);
     });
     // Curation mutations echo a fresh state; reflect it everywhere.
     sock.on("curation", (c: CurationState) => setCuration(c));
@@ -100,6 +119,14 @@ export function App() {
     // separate `visible_units` broadcast (the trimmed set), handled above.
     sock.on("main_settings", (m: { settings: Record<string, ViewSettingValue> }) =>
       setMainSettings(m.settings));
+    // Authoritative shared time window from the server (F3): this window's own
+    // change re-affirmed (the server may have clamped it), or another window's /
+    // the toolbar's. Pre-seed the guard so adopting it never re-emits -- the
+    // trace/tracemap panes seek to it, but a pane never re-broadcasts its own move.
+    sock.on("time_window", (w: TimeWindow) => {
+      lastSentWindow.current = winKey(w);
+      setTimeWindow(w);
+    });
     sock.ready.then(() => sock.send({ type: "hello" }));
   }, []);
 
@@ -118,6 +145,18 @@ export function App() {
   const setMainSetting = (name: string, value: ViewSettingValue) => {
     sockRef.current?.send({ type: "set_main_setting", name, value });
     setMainSettings((prev) => ({ ...prev, [name]: value }));
+  };
+  // Move the shared time window (F3). The single guarded emit both the toolbar
+  // control and the views' pan/zoom write-back call: skip if it's the window we
+  // last sent/adopted (so a window never re-broadcasts its own move), else seed
+  // the guard, send it (the server clamps + re-broadcasts to every window), and
+  // apply optimistically so the seek feels instant.
+  const emitTimeWindow = (w: TimeWindow) => {
+    const k = winKey(w);
+    if (k === lastSentWindow.current) return;
+    lastSentWindow.current = k;
+    sockRef.current?.send({ type: "set_time_window", seg: w.seg, t0: w.t0, t1: w.t1 });
+    setTimeWindow(w);
   };
   // Select explicit spikes on the server + drive the scatter pick-highlight by
   // their world coords (so it shows even for non-sampled spikes).
@@ -168,10 +207,11 @@ export function App() {
     () => (meta && curation && sockRef.current
       ? { sock: sockRef.current, meta, visibleUnits, setVisibleUnits, curation, curate,
           selection, clearSelection, selectionNonce, pickedPoints, pickedIndices, pickSpikes,
-          lassoPolygon, viewSettings, setViewSetting, mainSettings, setMainSetting }
+          lassoPolygon, viewSettings, setViewSetting, mainSettings, setMainSetting,
+          timeWindow, emitTimeWindow }
       : null),
     [meta, visibleUnits, curation, selection, selectionNonce, pickedPoints, pickedIndices,
-     lassoPolygon, viewSettings, mainSettings],
+     lassoPolygon, viewSettings, mainSettings, timeWindow],
   );
 
   if (!ctx || !meta) return <div style={{ padding: 12 }}>connecting…</div>;
@@ -190,8 +230,10 @@ export function App() {
           <span style={{ color: "#9ab" }}>
             {meta.num_units} units · {meta.num_channels} ch · {meta.duration_s.toFixed(0)}s
           </span>
-          {/* Application-global settings gear (F2), pushed to the right edge. */}
-          <div style={{ marginLeft: "auto" }}>
+          {/* Segment + time-seek control (F3), pushed to the right with the gear. */}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+            <TimeNav />
+            {/* Application-global settings gear (F2). */}
             <MainSettings />
           </div>
         </div>

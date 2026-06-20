@@ -4,7 +4,7 @@
 // sock/meta/visibility from here instead of receiving props from App.
 import { createContext, useContext } from "react";
 import { Sock } from "./socket";
-import { CurationState, Meta, Selection, UnitId, ViewSettingValue } from "./types";
+import { CurationState, Meta, Selection, TimeWindow, UnitId, ViewSettingValue } from "./types";
 
 export interface SiguiCtx {
   sock: Sock;
@@ -22,6 +22,12 @@ export interface SiguiCtx {
   // round-trip as the per-view ones. Catalog lives on `meta.main_settings_catalog`.
   mainSettings: Record<string, ViewSettingValue>;
   setMainSetting: (name: string, value: ViewSettingValue) => void;
+  // Shared segment + time-seek window (F3): the current {seg,t0,t1} every
+  // trace/tracemap view shows, plus a guarded emitter both the toolbar control
+  // and the views' own pan/zoom write through (echo-guarded so a window never
+  // re-seeks on its own broadcast; the server clamps + re-broadcasts to all).
+  timeWindow: TimeWindow;
+  emitTimeWindow: (w: TimeWindow) => void;
   // Current scatter region selection (drives the split action + readout).
   selection: Selection | null;
   clearSelection: () => void; // drop the selection everywhere (server + all windows)
