@@ -6,6 +6,8 @@
 
 A performant, browser-first rewrite of the SpikeInterface GUI.
 
+![sigui2](https://i.imgur.com/iILR4rp.png)
+
 `sigui2` serves a browser app from a thin Python backend that reuses the 
 data + curation layer of `spikeinterface-gui` (`spikeinterface_gui.controller.Controller`), 
 running it headless (no Qt/Panel event loop) behind a FastAPI/WebSocket service.
